@@ -1,0 +1,13 @@
+{
+  "name": "worldtourcoach-backend",
+  "version": "1.0.0",
+  "description": "Backend para World Tour Coach",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}
