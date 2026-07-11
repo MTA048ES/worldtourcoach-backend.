@@ -614,3 +614,24 @@ app.listen(PORT, () => {
   console.log(`📱 Conectado a Supabase: ${SUPABASE_URL}`);
   console.log(`🌐 Esperando mensajes de Telegram...`);
 });
+// ─── RUTA RAÍZ PARA VERIFICAR ESTADO ───
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    version: 'v9.7',
+    message: 'World Tour Coach API funcionando',
+    endpoints: {
+      telegram: '/feedback (POST)',
+      health: '/health (GET)'
+    }
+  });
+});
+
+// ─── RUTA DE SALUD (OPCIONAL) ───
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
