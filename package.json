@@ -7,6 +7,9 @@
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "@supabase/supabase-js": "^2.39.0",
@@ -14,17 +17,5 @@
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
-  },
-  "engines": {
-    "node": ">=16.0.0"
-  },
-  "keywords": [
-    "telegram",
-    "bot",
-    "cycling",
-    "coach",
-    "world-tour"
-  ],
-  "author": "World Tour Coach",
-  "license": "MIT"
+  }
 }
