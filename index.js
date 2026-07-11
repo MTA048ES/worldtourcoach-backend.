@@ -2,8 +2,10 @@
 // WORLD TOUR COACH - SERVIDOR NODE.JS  (VERSIÓN COMPLETA)
 // ============================================================
 // MIGRADO DESDE GAS v9.5 - TODOS LOS COMANDOS
+// VERSIÓN MEJORADA CON CORS, RUTAS ROOT Y HEALTH
 
 const express = require('express');
+const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,7 +16,13 @@ const SUPABASE_ANON_KEY = 'sb_publishable_mPhJsgW-V7n6TJs6-RLoWQ_Qk68d5qQ';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── MIDDLEWARE ───
+app.use(cors({
+  origin: '*', // Permite todas las conexiones
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // ─── CONFIGURACIÓN DEL SISTEMA ───
 const CONFIG = {
@@ -551,6 +559,53 @@ async function cmdTraza(chatId) {
   }
 }
 
+// ─── RUTA DE VERIFICACIÓN DE SALUD (NUEVO) ───
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: 'v9.7',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    memory: {
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+      heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB',
+      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+    },
+    config: {
+      ftp: CONFIG.FTP,
+      weight: CONFIG.WEIGHT_KG,
+      age: CONFIG.AGE_YEARS
+    }
+  });
+});
+
+// ─── RUTA RAÍZ (NUEVO) ───
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    version: 'v9.7',
+    name: 'World Tour Coach API',
+    description: 'Backend para el bot de entrenamiento World Tour Coach',
+    endpoints: {
+      'GET /': 'Información del servidor',
+      'GET /health': 'Estado de salud del servidor',
+      'POST /feedback': 'Webhook para Telegram',
+      'GET /ping': 'Ping para mantener activo el servidor'
+    },
+    documentation: 'https://github.com/tu-usuario/world-tour-coach',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ─── RUTA PING (NUEVO) ───
+app.get('/ping', (req, res) => {
+  res.json({
+    status: 'pong',
+    timestamp: new Date().toISOString(),
+    serverTime: new Date().toLocaleString('es-ES', { timeZone: CONFIG.TIMEZONE })
+  });
+});
+
 // ─── RUTA PRINCIPAL DE TELEGRAM ───
 app.post('/feedback', async (req, res) => {
   try {
@@ -608,30 +663,40 @@ app.post('/feedback', async (req, res) => {
   }
 });
 
-// ─── INICIAR EL SERVIDOR ───
-app.listen(PORT, () => {
-  console.log(`✅ Servidor World Tour Coach v9.7 corriendo en el puerto ${PORT}`);
-  console.log(`📱 Conectado a Supabase: ${SUPABASE_URL}`);
-  console.log(`🌐 Esperando mensajes de Telegram...`);
-});
-// ─── RUTA RAÍZ PARA VERIFICAR ESTADO ───
-app.get('/', (req, res) => {
-  res.json({
-    status: 'online',
-    version: 'v9.7',
-    message: 'World Tour Coach API funcionando',
-    endpoints: {
-      telegram: '/feedback (POST)',
-      health: '/health (GET)'
-    }
+// ─── MANEJO DE ERRORES 404 ───
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Ruta no encontrada',
+    path: req.path,
+    method: req.method,
+    availableEndpoints: ['/', '/health', '/ping', '/feedback (POST)']
   });
 });
 
-// ─── RUTA DE SALUD (OPCIONAL) ───
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+// ─── MANEJO DE ERRORES GLOBAL ───
+app.use((err, req, res, next) => {
+  console.error('❌ Error global:', err);
+  res.status(500).json({
+    error: 'Error interno del servidor',
+    message: err.message
   });
+});
+
+// ─── INICIAR EL SERVIDOR ───
+app.listen(PORT, () => {
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`✅ WORLD TOUR COACH v9.7`);
+  console.log(`📡 Servidor corriendo en puerto ${PORT}`);
+  console.log(`🔗 URL: http://localhost:${PORT}`);
+  console.log(`📱 Conectado a Supabase: ${SUPABASE_URL}`);
+  console.log(`🤖 Telegram Bot: ${CONFIG.TELEGRAM_TOKEN ? '✅ Configurado' : '⚠️ Sin token'}`);
+  console.log(`🌍 Timezone: ${CONFIG.TIMEZONE}`);
+  console.log(`📊 FTP: ${CONFIG.FTP}W | Peso: ${CONFIG.WEIGHT_KG}kg`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📍 Endpoints disponibles:');
+  console.log('  GET  /        - Información del servidor');
+  console.log('  GET  /health  - Estado de salud');
+  console.log('  GET  /ping    - Mantener activo');
+  console.log('  POST /feedback - Webhook Telegram');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
