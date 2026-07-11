@@ -1,5 +1,5 @@
 // ============================================================
-// WORLD TOUR COACH - SERVIDOR NODE.JS (VERSIÓN COMPLETA)
+// WORLD TOUR COACH - SERVIDOR NODE.JS  (VERSIÓN COMPLETA)
 // ============================================================
 // MIGRADO DESDE GAS v9.5 - TODOS LOS COMANDOS
 
