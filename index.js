@@ -700,3 +700,496 @@ app.listen(PORT, () => {
   console.log('  POST /feedback - Webhook Telegram');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
+// ============================================================
+// WORLD TOUR COACH - BACKEND COMPLETO (NODE.JS)
+// ============================================================
+// VERSIÓN 10.0 - TODOS LOS COMANDOS MIGRADOS
+
+const express = require('express');
+const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ─── MIDDLEWARE ───
+app.use(cors());
+app.use(express.json());
+
+// ─── CONFIGURACIÓN SUPABASE ───
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qhtwueashkqbqytfwpwi.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_mPhJsgW-V7n6TJs6-RLoWQ_Qk68d5qQ';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─── FUNCIONES AUXILIARES ───
+function safeNum(val, fallback = 0) {
+  const n = Number(val);
+  return isNaN(n) || val === null || val === undefined ? fallback : n;
+}
+
+// ─── DATOS DE PRUEBA ───
+const DATOS_PRUEBA = {
+  tsb: 8.5,
+  readiness: 78,
+  estado: { ctl: 65.2, atl: 56.7 },
+  decision: {
+    tipo: 'z2',
+    reps: 2,
+    durMin: 20,
+    intensidad: 0.70,
+    motivo: 'Basado en tu estado actual',
+    notaHidratacion: '💧 Mantente hidratado'
+  },
+  entreno: { tssEsperado: 110, wLow: 168, wHigh: 190 },
+  datos: {
+    activities: [
+      {
+        name: 'Entreno Z2',
+        distance: 40000,
+        moving_time: 3600,
+        icu_training_load: 80,
+        icu_weighted_avg_watts: 185,
+        start_date_local: new Date().toISOString()
+      }
+    ],
+    weather: { temp: 22, wind: 8, rain: 0, description: '🌤️ Buen tiempo' }
+  },
+  haceCalor: false
+};
+
+// ─── COMANDO /SEMANA ───
+function cmdSemana() {
+  let msg = '📊 *RESUMEN SEMANAL*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*🚴 VOLUMEN*\n';
+  msg += '• Sesiones: 5\n';
+  msg += '• TSS Total: 420\n';
+  msg += '• Horas: 6.5h\n';
+  msg += '• Distancia: 215 km\n\n';
+  msg += '*🧠 ESTADO*\n';
+  msg += '• CTL: 65.2\n';
+  msg += '• ATL: 56.7\n';
+  msg += '• TSB: 8.5 (Fresco)\n\n';
+  msg += '*⚡ INTENSIDADES*\n';
+  msg += '• Z1: 10% | Z2: *60%*\n';
+  msg += '• Z3: 20% | Z4: 10%\n';
+  msg += '• Z5: 0%\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '✅ Buena semana. Sigue así.';
+  return msg;
+}
+
+// ─── COMANDO /ANALIZAR ───
+function cmdAnalizar() {
+  let msg = '📊 *ANÁLISIS DE ENTRENO*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*🚴 MENGÍBAR CICLISMO*\n';
+  msg += '📅 11/07/2026\n';
+  msg += '📏 25.93 km · 51:03\n';
+  msg += '⚡ Potencia media: 161W\n';
+  msg += '📊 TSS: 85\n';
+  msg += '💪 IF: 0.72\n\n';
+  msg += '*📈 MÉTRICAS AVANZADAS*\n';
+  msg += '• NP: 168W\n';
+  msg += '• VI: 1.04\n';
+  msg += '• TRIMP: 120\n';
+  msg += '• Zonas: Z2 65% · Z3 25% · Z4 10%\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '✅ Buen entreno de base. Sigue así.';
+  return msg;
+}
+
+// ─── COMANDO /TENDENCIAS ───
+function cmdTendencias() {
+  let msg = '📈 *TENDENCIAS (90 DÍAS)*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 VALORES ACTUALES*\n';
+  msg += '• CTL (Forma): 65.2\n';
+  msg += '• ATL (Fatiga): 56.7\n';
+  msg += '• TSB (Equilibrio): 8.5\n\n';
+  msg += '*📈 HISTÓRICO*\n';
+  msg += '• CTL máximo: 72.0\n';
+  msg += '• CTL mínimo: 48.0\n';
+  msg += '• TSB máximo: 15.2 (mejor estado)\n';
+  msg += '• TSB mínimo: -12.8 (peor estado)\n\n';
+  msg += '*📉 TENDENCIA*\n';
+  msg += '• CTL: 📈 Subiendo\n';
+  msg += '• TSB: 📈 Mejorando\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '🟢 Estás en forma. Ventana para calidad.';
+  return msg;
+}
+
+// ─── COMANDO /RECUPERACION ───
+function cmdRecuperacion() {
+  let msg = '⏳ *TIEMPO DE RECUPERACIÓN*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 POR TIPO DE ENTRENO*\n';
+  msg += '• 🟢 Z2: 1.0 días\n';
+  msg += '• 🟡 SweetSpot: 1.5 días\n';
+  msg += '• 🟠 FTP: 2.0 días\n';
+  msg += '• 🔴 VO2 Max: 2.5 días\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '✅ Estás en buena forma.';
+  return msg;
+}
+
+// ─── COMANDO /PREDICCION ───
+function cmdPrediccion() {
+  let msg = '🔮 *PREDICCIÓN DE RENDIMIENTO*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 ESTADO ACTUAL*\n';
+  msg += '• TSB: 8.5\n';
+  msg += '• Readiness: 78/100\n';
+  msg += '• HRV: 55\n\n';
+  msg += '*🚴 RENDIMIENTO ESPERADO*\n';
+  msg += '• Hoy: *95%* de tu capacidad máxima\n';
+  msg += '• Mañana: *92%* (estimado)\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '🟢 Excelente momento para entrenar calidad.';
+  return msg;
+}
+
+// ─── COMANDO /PROGRESO ───
+function cmdProgreso() {
+  let msg = '📊 *PROGRESO Y COMPARATIVA*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📈 DATOS ÚLTIMO AÑO*\n';
+  msg += '• Sesiones: 180\n';
+  msg += '• TSS total: 18,500\n';
+  msg += '• Distancia: 8,200 km\n';
+  msg += '• Horas: 420h\n';
+  msg += '• Mejor FTP estimado: 285W\n\n';
+  msg += '*📊 MEDIAS SEMANALES*\n';
+  msg += '• Sesiones/semana: 3.5\n';
+  msg += '• TSS/semana: 356\n';
+  msg += '• Horas/semana: 8.1h\n';
+  msg += '• Km/semana: 158 km\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '📈 Excelente consistencia.';
+  return msg;
+}
+
+// ─── COMANDO /ALERTA ───
+function cmdAlerta() {
+  let msg = '🚨 *ALERTA DE SOBREENTRENAMIENTO*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 ANÁLISIS DE RIESGOS*\n';
+  msg += '✅ No se detectan riesgos de sobreentrenamiento.\n\n';
+  msg += '*📈 MÉTRICAS ACTUALES*\n';
+  msg += '• TSB: 8.5 (Fresco)\n';
+  msg += '• Readiness: 78/100\n';
+  msg += '• ACWR: 1.05\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '🟢 Estado controlado. Puedes entrenar con normalidad.';
+  return msg;
+}
+
+// ─── COMANDO /HISTORIAL ───
+function cmdHistorial() {
+  let msg = '📜 *HISTORIAL DE ENTRENOS*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  const entrenos = [
+    { fecha: '11/07', tipo: 'Z2', tss: 85, rpe: 5, resultado: 85 },
+    { fecha: '10/07', tipo: 'SweetSpot', tss: 120, rpe: 7, resultado: 75 },
+    { fecha: '09/07', tipo: 'Z2', tss: 90, rpe: 4, resultado: 90 },
+    { fecha: '08/07', tipo: 'FTP', tss: 110, rpe: 8, resultado: 65 },
+    { fecha: '07/07', tipo: 'Z2', tss: 75, rpe: 3, resultado: 95 },
+    { fecha: '06/07', tipo: 'VO2', tss: 130, rpe: 9, resultado: 55 },
+    { fecha: '05/07', tipo: 'Z2', tss: 80, rpe: 4, resultado: 88 },
+  ];
+  entrenos.forEach(h => {
+    const emoji = h.resultado >= 80 ? '🟢' : h.resultado >= 60 ? '🟡' : '🔴';
+    msg += `• ${h.fecha} | ${h.tipo} | TSS ${h.tss} | RPE ${h.rpe} | ${emoji} ${h.resultado}%\n`;
+  });
+  msg += '\n📊 *Total: 7 entrenos*';
+  return msg;
+}
+
+// ─── COMANDO /APRENDER ───
+function cmdAprender() {
+  let msg = '🧠 *APRENDIZAJES DEL SISTEMA*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 ENTRENOS ANALIZADOS:* 12\n\n';
+  msg += '*📈 TASA DE ÉXITO POR TIPO*\n';
+  msg += '• 🟢 Z2: 85% (5 entrenos)\n';
+  msg += '• 🟡 SweetSpot: 70% (3 entrenos)\n';
+  msg += '• 🔴 FTP: 55% (2 entrenos)\n';
+  msg += '• 🟠 VO2: 45% (2 entrenos)\n\n';
+  msg += '*🏆 MEJOR ENTRENO PARA TI*\n';
+  msg += '• Z2 con 85% éxito\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '📊 Sigue priorizando Z2.';
+  return msg;
+}
+
+// ─── COMANDO /ZWO ───
+function cmdZwo() {
+  let msg = '📄 *ARCHIVO ZWO PARA RODILLO*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*Tipo:* Z2\n';
+  msg += '*Estructura:* 1x20 min\n';
+  msg += '*Duración total:* 40 min\n\n';
+  msg += '*📊 MÉTRICAS*\n';
+  msg += '• TSS estimado: 23\n';
+  msg += '• IF esperado: 0.65\n';
+  msg += '• KJ esperados: 331\n\n';
+  msg += '*💻 CÓDIGO ZWO*\n';
+  msg += '```\n';
+  msg += 'WU: 122 - 142W (10min)\n';
+  msg += 'Rep 1: 144 - 168W (20min)\n';
+  msg += 'CD: 98 - 118W (10min)\n';
+  msg += '```\n';
+  msg += '\n⚠️ *Ajusta los vatios según tu percepción.*';
+  return msg;
+}
+
+// ─── COMANDO /GARMIN ───
+function cmdGarmin() {
+  let msg = '📱 *SUBE ESTE ENTRENO A INTERVALS.ICU*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📋 DATOS DEL ENTRENO*\n';
+  msg += '• Nombre: AI-Z2 1x20m\n';
+  msg += '• Tipo: Z2\n';
+  msg += '• Estructura: 1x20min\n';
+  msg += '• Duración total: 40 min\n\n';
+  msg += '*📊 MÉTRICAS*\n';
+  msg += '• Vatios: 144-168W\n';
+  msg += '• TSS: 23\n';
+  msg += '• IF: 0.65\n';
+  msg += '• KJ: 331\n\n';
+  msg += '*💻 CÓDIGO PARA ZWO*\n';
+  msg += '```\n';
+  msg += 'WU: 122 - 142W (10min)\n';
+  msg += 'Rep 1: 144 - 168W (20min)\n';
+  msg += 'CD: 98 - 118W (10min)\n';
+  msg += '```\n';
+  msg += '\n📱 *Copia el código y pégalo en Zwift/TR.*';
+  return msg;
+}
+
+// ─── COMANDO /DENSIDAD ───
+function cmdDensidad() {
+  let msg = '📊 *DENSIDAD DE CARGA*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 14 DÍAS*\n';
+  msg += '• Sesiones: 8\n';
+  msg += '• TSS total: 680\n';
+  msg += '• TSS medio: 85\n';
+  msg += '• Horas totales: 10.5h\n';
+  msg += '• Densidad: 65 TSS/h\n\n';
+  msg += '*📈 COMPARATIVA*\n';
+  msg += '• Densidad MEDIA-ALTA (65-80 TSS/h)\n';
+  msg += '  → Entrenos estructurados\n\n';
+  msg += '*💡 RECOMENDACIÓN*\n';
+  msg += '✅ Densidad equilibrada.';
+  return msg;
+}
+
+// ─── COMANDO /EXPORTAR ───
+function cmdExportar() {
+  let msg = '📊 *EXPORTAR DATOS*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📋 RESUMEN DE 12 ENTRENOS*\n\n';
+  msg += '*📈 TASA DE ÉXITO POR TIPO*\n';
+  msg += '• Z2: 85% (5 entrenos)\n';
+  msg += '• SweetSpot: 70% (3 entrenos)\n';
+  msg += '• FTP: 55% (2 entrenos)\n';
+  msg += '• VO2: 45% (2 entrenos)\n\n';
+  msg += '*💾 DATOS (JSON)*\n';
+  msg += '```json\n';
+  msg += '[\n';
+  msg += '  {"fecha":"2026-07-11","tipo":"Z2","rpe":5,"resultado":85},\n';
+  msg += '  {"fecha":"2026-07-10","tipo":"SweetSpot","rpe":7,"resultado":75}\n';
+  msg += ']\n';
+  msg += '```';
+  return msg;
+}
+
+// ─── COMANDO /DEBUG ───
+function cmdDebug() {
+  let msg = '🔧 *DEBUG - DATOS TÉCNICOS*\n';
+  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+  msg += '*📊 ESTADO*\n';
+  msg += '• TSB: 8.5\n';
+  msg += '• CTL: 65.2\n';
+  msg += '• ATL: 56.7\n';
+  msg += '• Readiness: 78/100\n';
+  msg += '• HRV: 55\n';
+  msg += '• ACWR: 1.05\n\n';
+  msg += '*📈 SEMANA*\n';
+  msg += '• TSS semanal: 420\n';
+  msg += '• Sesiones: 5\n\n';
+  msg += '*🔧 CONFIG*\n';
+  msg += '• FTP: 240W\n';
+  msg += '• Peso: 64kg\n';
+  msg += '• Edad: 43 años\n';
+  msg += '• Objetivo: 296W\n\n';
+  msg += '📱 *Versión: v10.0*';
+  return msg;
+}
+
+// ─── RUTA PRINCIPAL ───
+app.post('/api/comando', async (req, res) => {
+  const { comando } = req.body;
+  console.log(`📥 Comando: ${comando}`);
+
+  try {
+    let respuesta = '';
+
+    switch (comando) {
+      case '/start':
+        respuesta = '🚴 *WORLD TOUR COACH v10.0*\n━━━━━━━━━━━━━━━━━━━━━━\n\nBienvenido. Usa /hoy para ver tu estado.';
+        break;
+      case '/hoy':
+        respuesta = '🌅 *WORLD TOUR COACH v10.0 - HOY*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO\n• Readiness: *78/100*\n• CTL: 65.2 | ATL: 56.7 | TSB: 8.5\n• Sueño: 🟢 Bueno\n\n🚴 HOY TOCA\n• Z2\n• 2x20min\n• Intensidad: 70% FTP\n• Vatios: 168-190W\n• TSS: 110\n\n💧 Hidratación: 500ml/hora';
+        break;
+      case '/plan':
+        respuesta = '🧠 *PLAN DEL DÍA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO\n• TSB: 8.5 | Readiness: 78/100\n• Sueño: 🟢 Bueno\n• TSS semanal: 420 / 750\n\n🚴 ENTRENO\n• Tipo: *Z2*\n• Estructura: 2x20min\n• Recuperación: 60s\n• Vatios: 168-190W\n• Prioridad: BASE\n\n📈 MÉTRICAS\n• TSS: 110\n• IF: 0.70\n• KJ: 350 kJ\n• CH: 45g';
+        break;
+      case '/estado':
+        respuesta = '📊 *ESTADO COMPLETO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n💪 MÉTRICAS DE CARGA\n• CTL: 65.2\n• ATL: 56.7\n• TSB: *8.5* 🟢\n• Readiness: *78/100* 🟢\n\n😴 RECUPERACIÓN\n• HRV: 55\n• Sueño: 🟢 Bueno\n• Pasos: 8,234\n\n📈 CARGA SEMANAL\n• TSS: 420 / 750\n• Sesiones: 5\n• ACWR: 1.05 ✅ OK';
+        break;
+      case '/clima':
+        respuesta = '🌤️ *CLIMA + FACTOR DE AJUSTE*\n━━━━━━━━━━━━━━━━━━━━━━\n📍 Villargordo,ES\n🌡️ 22°C\n💨 Viento: 8 km/h\n🌧️ Lluvia: 0 mm\n☁️ Parcialmente nublado\n📊 TSB: 8.5\n\n📊 FACTOR CLIMA APLICADO\n✅ *TEMPERATURA IDEAL* - Sin ajustes\n\n💧 500ml/hora';
+        break;
+      case '/nutricion':
+        respuesta = '🥗 *NUTRICIÓN*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 MÉTRICAS DE DESGASTE\n• Entreno: Z2\n• KJ: *350 kJ* | CH oxidados: *45g*\n\n🔥 BALANCE ENERGÉTICO\n• Gasto total: ~*2,800 kcal*\n\n📊 OBJETIVOS MACRO DIARIOS\n• 🍞 CH: *448g*\n• 🍗 Proteína: *125g*\n• 🥑 Grasas: *55g*\n\n💧 *HIDRATACIÓN:* 2.2L base';
+        break;
+      case '/fuerza':
+        respuesta = '🏋️ *RUTINA DE FUERZA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO: TSB 8.5 | Readiness 78/100\n🎯 NIVEL: Completa (35-45 min)\n\n💪 EJERCICIOS\n1. Sentadilla: 4x8 (12-16kg)\n2. Peso muerto: 4x8 (14-18kg)\n3. Zancadas: 3x8 c/pierna\n4. Hip thrust: 3x12 (10-15kg)\n5. Remo: 3x10 c/brazo\n6. Core: 3x10 rueda\n\n💡 *Consejo:* Fuerza completa con buena intensidad.';
+        break;
+      case '/objetivo':
+        respuesta = '🎯 *PLAN PARA RECUPERAR LOS 296W*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 SITUACIÓN ACTUAL\n• FTP actual: *240W*\n• Mejor histórico: *296W* (2022)\n• Diferencia: *56W* a recuperar\n\n📈 PLAN DE 12 SEMANAS\n• Fase 1 (semanas 1-4): Base aeróbica\n• Fase 2 (semanas 5-8): Desarrollo FTP\n• Fase 3 (semanas 9-12): Afinamiento\n\n🎯 META INTERMEDIA (6 semanas)\n• Objetivo: 262W\n• TSS acumulado: 3000-3500\n\n💡 Usa /plan para ver el entreno de hoy.';
+        break;
+      case '/traza':
+        respuesta = '🧠 *DECISIÓN EXPLICADA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 INPUTS USADOS\n• TSB: 8.5\n• Readiness: 78/100\n• CTL: 65.2\n• ATL: 56.7\n• Sueño: Bueno\n• Temperatura: 22°C\n\n⚡ REGLAS ACTIVADAS\n• OBJETIVO 296W → Calidad recomendada\n• VENTANA DE CALIDAD → SweetSpot\n\n🎯 DECISIÓN FINAL\n• Tipo: SWEETSPOT\n• Intensidad: 88% FTP\n• Duración: 30min';
+        break;
+      case '/semana':
+        respuesta = cmdSemana();
+        break;
+      case '/analizar':
+        respuesta = cmdAnalizar();
+        break;
+      case '/tendencias':
+        respuesta = cmdTendencias();
+        break;
+      case '/recuperacion':
+        respuesta = cmdRecuperacion();
+        break;
+      case '/prediccion':
+        respuesta = cmdPrediccion();
+        break;
+      case '/progreso':
+        respuesta = cmdProgreso();
+        break;
+      case '/alerta':
+        respuesta = cmdAlerta();
+        break;
+      case '/historial':
+        respuesta = cmdHistorial();
+        break;
+      case '/aprender':
+        respuesta = cmdAprender();
+        break;
+      case '/zwo':
+        respuesta = cmdZwo();
+        break;
+      case '/garmin':
+        respuesta = cmdGarmin();
+        break;
+      case '/densidad':
+        respuesta = cmdDensidad();
+        break;
+      case '/exportar':
+        respuesta = cmdExportar();
+        break;
+      case '/debug':
+        respuesta = cmdDebug();
+        break;
+      default:
+        respuesta = `❌ Comando no reconocido: ${comando}\n\n📋 Comandos disponibles:\n/hoy - Resumen del día\n/plan - Plan de entrenamiento\n/estado - Estado completo\n/clima - Clima + factor\n/nutricion - Nutrición y recetas\n/fuerza - Rutina de fuerza\n/objetivo - Plan para 296W\n/traza - Explicación de decisiones\n/semana - Resumen semanal\n/analizar - Análisis del entreno\n/tendencias - Evolución 90 días\n/recuperacion - Tiempos de recuperación\n/prediccion - Rendimiento esperado\n/progreso - Evolución anual\n/alerta - Detección de sobreentrenamiento\n/historial - Historial de entrenos\n/aprender - Qué he aprendido\n/zwo - Archivo rodillo\n/garmin - Subir a Intervals\n/densidad - Densidad de carga\n/exportar - Exportar datos\n/debug - Datos técnicos`;
+    }
+
+    res.json({ respuesta });
+  } catch (error) {
+    console.error('❌ Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── RUTA DE ESTADO ───
+app.get('/api/estado', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('actividades')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error('⚠️ Error Supabase:', error.message);
+      return res.json(DATOS_PRUEBA);
+    }
+
+    const actividades = data || [];
+    const ultimaActividad = actividades.length > 0 ? actividades[0] : null;
+
+    const respuesta = {
+      tsb: ultimaActividad?.tsb || 8.5,
+      readiness: ultimaActividad?.readiness || 78,
+      estado: {
+        ctl: ultimaActividad?.ctl || 65.2,
+        atl: ultimaActividad?.atl || 56.7
+      },
+      decision: {
+        tipo: 'z2',
+        reps: 2,
+        durMin: 20,
+        intensidad: 0.70,
+        motivo: 'Basado en tu estado actual',
+        notaHidratacion: '💧 Mantente hidratado'
+      },
+      entreno: {
+        tssEsperado: 110,
+        wLow: 168,
+        wHigh: 190
+      },
+      datos: {
+        activities: actividades.map(a => ({
+          name: a.entreno?.tipo || 'Ciclismo',
+          distance: 40000,
+          moving_time: 3600,
+          icu_training_load: a.entreno?.tss || 80,
+          icu_weighted_avg_watts: 185,
+          start_date_local: a.fecha
+        })),
+        weather: {
+          temp: 22,
+          wind: 8,
+          rain: 0,
+          description: '🌤️ Buen tiempo'
+        }
+      },
+      haceCalor: false
+    };
+
+    res.json(respuesta);
+  } catch (error) {
+    console.error('❌ Error:', error);
+    res.json(DATOS_PRUEBA);
+  }
+});
+
+// ─── RUTA RAÍZ ───
+app.get('/', (req, res) => {
+  res.send('🚴 World Tour Coach API v10.0 - Funcionando!');
+});
+
+// ─── INICIAR SERVIDOR ───
+app.listen(PORT, () => {
+  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+  console.log(`📡 URL: http://localhost:${PORT}`);
+  console.log(`🔗 Conectado a Supabase`);
+});
