@@ -1,0 +1,23 @@
+# Telegram
+TELEGRAM_TOKEN=8240108371:AAFYFkoy7h6gLfue4tD62ORj47U1GMjZUc8
+CHAT_ID=939585578
+
+# Intervals.icu
+INTERVALS_API_KEY=5zufcjnbw04dziglsc36rcuq1
+ATHLETE_ID=i26693
+
+# OpenWeather
+WEATHER_API_KEY=d859e04d215436d32a02ad760282bba7
+
+# Supabase
+SUPABASE_URL=https://qhtwueashkqbqytfwpwi.supabase.co
+SUPABASE_ANON_KEY=sb_publishable_mPhJsgW-V7n6TJs6-RLoWQ_Qk68d5qQ
+
+# Configuración
+FTP=240
+WEIGHT_KG=64
+AGE_YEARS=43
+HEIGHT_CM=173
+
+# Puerto
+PORT=3000
