@@ -15,6 +15,54 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ─── RUTAS DE PRUEBA PARA RAILWAY (DEBEN ESTAR AL PRINCIPIO) ───
+console.log('🚀 Servidor iniciando en Railway...');
+console.log('📡 Puerto:', PORT);
+
+app.get('/', (req, res) => {
+  console.log('✅ Ruta / consultada correctamente');
+  res.json({
+    status: 'online',
+    version: 'v9.1',
+    name: 'World Tour Coach API',
+    message: '¡Servidor funcionando correctamente en Railway!',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      'GET /': 'Información del servidor',
+      'GET /health': 'Estado de salud',
+      'GET /ping': 'Mantener activo',
+      'POST /webhook': 'Webhook para Telegram'
+    }
+  });
+});
+
+app.get('/health', (req, res) => {
+  console.log('✅ Ruta /health consultada correctamente');
+  res.json({
+    status: 'ok',
+    version: 'v9.1',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/ping', (req, res) => {
+  console.log('✅ Ruta /ping consultada correctamente');
+  res.json({
+    status: 'pong',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ─── WEBHOOK DE PRUEBA PARA RAILWAY ───
+app.post('/webhook', (req, res) => {
+  console.log('✅ Ruta /webhook consultada correctamente');
+  res.json({
+    ok: true,
+    message: 'Webhook recibido correctamente'
+  });
+});
+
 // ─── CONFIGURACIÓN ───
 const CONFIG = {
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN,
