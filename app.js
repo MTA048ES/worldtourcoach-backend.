@@ -100,6 +100,34 @@ const POWER_ZONES = [
 const FEEDBACK_KEY = 'feedback_estado';
 const API_BASE = `https://intervals.icu/api/v1/athlete/${CONFIG.ATHLETE_ID}`;
 
+// ─── RUTAS HTTP (ENDPOINTS) ───
+
+// Ruta raíz para verificar que el backend funciona en Railway
+app.get('/', (req, res) => {
+  res.json({
+    status: "online",
+    message: "¡Backend de World Tour Coach funcionando perfectamente!",
+    athleteId: CONFIG.ATHLETE_ID
+  });
+});
+
+// Nota: Si necesitas recibir peticiones POST de tu Google Apps Script, puedes descomentar y usar esta ruta de ejemplo:
+/*
+app.post('/api/endpoint', async (req, res) => {
+  try {
+    const datos = req.body;
+    // Aquí gestionas lo que te mande tu Google Apps Script...
+    res.json({ success: true, message: "Datos procesados con éxito" });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+*/
+
+// ─── INICIO DEL SERVIDOR ───
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Servidor corriendo en el puerto ${PORT}`);
+});
 // ─── FUNCIONES AUXILIARES ───
 function safeNum(val, fallback = 0) {
   const n = Number(val);
