@@ -100,42 +100,6 @@ const POWER_ZONES = [
 const FEEDBACK_KEY = 'feedback_estado';
 const API_BASE = `https://intervals.icu/api/v1/athlete/${CONFIG.ATHLETE_ID}`;
 
-// ─── RUTAS HTTP (ENDPOINTS) ───
-
-// 1. Ruta raíz (GET) para verificar el estado de la app en Railway
-app.get('/', (req, res) => {
-  res.json({
-    status: "online",
-    message: "¡Backend de World Tour Coach funcionando perfectamente!",
-    athleteId: CONFIG.ATHLETE_ID
-  });
-});
-
-// 2. Ruta POST para recibir datos de tu Google Apps Script
-app.post('/', async (req, res) => {
-  try {
-    const datos = req.body;
-    console.log("Datos recibidos de Google Apps Script:", datos);
-    
-    // Aquí puedes procesar los datos que envía el script
-    
-    res.json({ 
-      success: true, 
-      message: "Datos recibidos correctamente en el backend" 
-    });
-  } catch (error) {
-    console.error("Error procesando petición POST:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ─── INICIO DEL SERVIDOR ───
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
-});
 // ─── FUNCIONES AUXILIARES ───
 function safeNum(val, fallback = 0) {
   const n = Number(val);
@@ -182,7 +146,6 @@ async function sendTelegram(text) {
     });
 
     if (!response.ok) {
-      // Reintentar sin Markdown
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -396,7 +359,6 @@ function calcularEstadoSistema(datos) {
   let weeklyTss = 0;
   let weeklyHours = 0;
   let weeklySessions = 0;
-  const now = Date.now();
 
   const diaSemana = new Date().getDay();
   const diasDesdeLunes = diaSemana === 0 ? 6 : diaSemana - 1;
@@ -2046,309 +2008,6 @@ async function cmdGarmin(args) {
   }
 }
 
-// ─── WEBHOOK PRINCIPAL ───
-app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body;
-    const message = body.message || body.edited_message || body.channel_post;
-
-    if (!message) return res.json({ ok: true });
-    if (message.from && message.from.is_bot) return res.json({ ok: true });
-
-    const chatId = (message.chat && message.chat.id) ? message.chat.id.toString() : '';
-    const rawText = (message.text || '').trim();
-
-    if (!chatId || chatId !== CONFIG.CHAT_ID.toString()) {
-      console.log('[Webhook] Chat no autorizado');
-      return res.json({ ok: true });
-    }
-
-    const uniqueKey = chatId + '_' + (message.message_id || '');
-    const lastKey = getProperty('last_msg_key');
-    if (lastKey === uniqueKey) return res.json({ ok: true });
-    setProperty('last_msg_key', uniqueKey);
-
-    if (!rawText) return res.json({ ok: true });
-
-    if (await procesarMensajeFeedback(rawText, chatId)) {
-      return res.json({ ok: true });
-    }
-
-    const parts = rawText.split(/\s+/);
-    const cmd = parts[0].toLowerCase();
-    const args = parts.slice(1);
-
-    if (cmd === '/hoy') {
-      if (args.length === 0) {
-        await cmdHoy(chatId);
-      } else {
-        const sub = args[0].toLowerCase().replace('--', '');
-        switch (sub) {
-          case 'estado': await cmdEstado(); break;
-          case 'plan': await cmdPlan(); break;
-          case 'clima': await cmdClima(); break;
-          case 'nutricion': await cmdNutricion(); break;
-          case 'objetivo': await cmdObjetivo(); break;
-          case 'ayuda':
-            await sendTelegram('📋 *Subcomandos de /hoy:*\n/hoy --estado → Estado completo\n/hoy --plan → Plan del día\n/hoy --clima → Clima + factor\n/hoy --nutricion → Nutrición + recetas\n/hoy --objetivo → Plan para 296W\n/hoy (sin args) → Todo junto');
-            break;
-          default:
-            await sendTelegram('Subcomando no reconocido. Usa /hoy --ayuda');
-        }
-      }
-      return res.json({ ok: true });
-    }
-
-    switch (cmd) {
-      case '/start': await cmdStart(); break;
-      case '/plan': await cmdPlan(); break;
-      case '/estado': await cmdEstado(); break;
-      case '/analizar': await cmdAnalizar(); break;
-      case '/clima': await cmdClima(); break;
-      case '/ajuste': await cmdAjuste(); break;
-      case '/nutricion': await cmdNutricion(); break;
-      case '/fuerza': await cmdFuerza(); break;
-      case '/semana': await cmdSemana(); break;
-      case '/semanapasada': await cmdSemanaPasada(); break;
-      case '/consejo': await cmdConsejo(); break;
-      case '/resumen': await cmdResumen(); break;
-      case '/fatiga': await cmdFatiga(); break;
-      case '/aprender': await cmdAprender(); break;
-      case '/aprender-validar': await cmdAprenderValidar(); break;
-      case '/tendencias': await cmdTendencias(); break;
-      case '/recuperacion': await cmdRecuperacion(); break;
-      case '/prediccion': await cmdPrediccion(); break;
-      case '/progreso': await cmdProgreso(); break;
-      case '/alerta': await cmdAlerta(); break;
-      case '/densidad': await cmdDensidad(); break;
-      case '/exportar': await cmdExportar(); break;
-      case '/objetivo': await cmdObjetivo(); break;
-      case '/historial': await cmdHistorial(); break;
-      case '/zwo': await cmdZwo(args); break;
-      case '/garmin': await cmdGarmin(args); break;
-      case '/debug': await cmdDebug(); break;
-      case '/traza': await cmdTraza(); break;
-      default:
-        await sendTelegram('Comando no reconocido.\nEscribe /start para ver el menu.');
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.log('[Webhook] ERROR:', err.toString());
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── PROCESAR MENSAJE FEEDBACK ───
-async function procesarMensajeFeedback(texto, chatId) {
-  const raw = getUserProperty(FEEDBACK_KEY);
-  if (!raw) return false;
-
-  let estado = {};
-  try { estado = JSON.parse(raw); } catch(e) { return false; }
-  if (!estado.esperando) return false;
-
-  const paso = estado.paso || 1;
-  const t = texto.toLowerCase().trim();
-
-  switch (paso) {
-    case 1:
-      estado.rpe = Math.min(10, Math.max(1, parseInt(t) || 5));
-      estado.paso = 2;
-      await sendTelegram('*2/5 - Cumpliste los vatios objetivo?*\nResponde: si / parcial / no');
-      break;
-
-    case 2:
-      estado.watts = (t === 'si') ? 'si' : (t === 'parcial' ? 'parcial' : 'no');
-      estado.paso = 3;
-      await sendTelegram('*3/5 - Sensacion de piernas (1-3)*\n1 = pesadas · 2 = normales · 3 = ligeras');
-      break;
-
-    case 3:
-      estado.piernas = Math.min(3, Math.max(1, parseInt(t) || 2));
-      estado.paso = 4;
-      await sendTelegram('*4/5 - Estres / carga laboral hoy (1-3)*\n1 = bajo · 2 = normal · 3 = alto');
-      break;
-
-    case 4:
-      estado.stress = Math.min(3, Math.max(1, parseInt(t) || 2));
-      estado.paso = 5;
-      await sendTelegram('*5/5 - Calidad del sueno anoche (1-3)*\n1 = mal · 2 = regular · 3 = bien');
-      break;
-
-    case 5:
-      estado.sleep = Math.min(3, Math.max(1, parseInt(t) || 2));
-
-      const datos = await obtenerDatosCompletos();
-      const hoy = datos ? datos.today : {};
-      const ctl = safeNum(hoy.ctl, 50);
-      const atl = safeNum(hoy.atl, 50);
-      const tsb = ctl - atl;
-      const acwr = calcularACWR();
-
-      const readiness = calcularReadiness(estado.rpe, estado.piernas, estado.stress, estado.sleep, tsb, atl, ctl, estado.watts);
-      const fatigaOculta = calcularFatigaOculta(estado.rpe, tsb, estado.piernas, estado.watts);
-      const semaforo = getSemaforo(readiness);
-      const zonaManana = calcularZonaRecomendada(readiness);
-      const explicacion = buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr.ratio);
-
-      let msg =
-        '━━━━━━━━━━━━━━━━━━━━━━\n' +
-        'ANALISIS DEL STAFF\n' +
-        '━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-        '*Estado general*\n' +
-        `CTL: ${ctl.toFixed(1)}  ATL: ${atl.toFixed(1)}  TSB: ${tsb.toFixed(1)}\n` +
-        `ACWR: ${acwr.ratio.toFixed(2)}\n\n` +
-        `*Readiness: ${readiness}/100*\n` +
-        `${semaforo}\n` +
-        `Fatiga oculta: ${fatigaOculta}\n` +
-        `Carga laboral: ${buildTextoStress(estado.stress)}\n` +
-        `Sueno: ${buildTextoSleep(estado.sleep)}\n\n` +
-        `*Recomendacion manana:*\n${zonaManana}\n\n` +
-        `*Staff:*\n${explicacion}`;
-
-      await sendTelegramLong(msg);
-
-      const entrenoActual = {
-        tipo: estado.tipo || 'desconocido',
-        reps: 0,
-        durMin: 0,
-        intensidad: 0,
-        tss: estado.tss || 0,
-        tsb: tsb,
-        readiness: readiness,
-        temp: datos && datos.weather ? datos.weather.temp || 25 : 25,
-        sleepQuality: estado.sleep || 2,
-        hrv: datos && datos.today ? safeNum(datos.today.hrv, 50) : 50
-      };
-
-      const feedback = {
-        rpe: estado.rpe,
-        watts: estado.watts,
-        piernas: estado.piernas,
-        stress: estado.stress,
-        sleep: estado.sleep
-      };
-
-      guardarEntrenoHistorial(entrenoActual, feedback);
-
-      deleteUserProperty(FEEDBACK_KEY);
-      return true;
-  }
-
-  setUserProperty(FEEDBACK_KEY, JSON.stringify(estado));
-  return true;
-}
-
-// ─── FUNCIONES AUXILIARES DE FEEDBACK ───
-function calcularReadiness(rpe, legs, stress, sleep, tsb, atl, ctl, watts) {
-  const safeRpe = safeNum(rpe, 5);
-  const safeLegs = safeNum(legs, 2);
-  const safeStress = safeNum(stress, 2);
-  const safeSleep = safeNum(sleep, 2);
-  const safeTsb = safeNum(tsb, 0);
-  const safeAtl = safeNum(atl, 50);
-  const safeCtl = safeNum(ctl, 50);
-  const safeWatts = (typeof watts === 'string') ? watts : 'si';
-
-  let score = 100;
-
-  if (safeRpe >= 9) score -= 35;
-  else if (safeRpe >= 8) score -= 25;
-  else if (safeRpe >= 7) score -= 15;
-  else if (safeRpe >= 5) score -= 5;
-
-  if (safeLegs === 1) score -= 20;
-  else if (safeLegs === 2) score -= 5;
-
-  if (safeSleep === 1) score -= 20;
-  else if (safeSleep === 2) score -= 5;
-
-  if (safeStress === 3) score -= 15;
-  else if (safeStress === 2) score -= 5;
-
-  if (safeWatts === 'no') score -= 15;
-  else if (safeWatts === 'parcial') score -= 7;
-
-  if (safeTsb < -20) score -= 10;
-  else if (safeTsb > 10) score += 5;
-
-  const ratio = (safeCtl > 0) ? (safeAtl / safeCtl) : 1;
-  if (ratio > 1.4) score -= 15;
-  else if (ratio > 1.2) score -= 8;
-
-  return Math.max(5, Math.min(100, Math.round(score)));
-}
-
-function calcularFatigaOculta(rpe, tsb, legs, watts) {
-  const safeRpe = safeNum(rpe, 5);
-  const safeTsb = safeNum(tsb, 0);
-  const safeLegs = safeNum(legs, 2);
-  const safeWatts = (typeof watts === 'string') ? watts : 'si';
-
-  const rpeAltoTsbOk = safeRpe >= 7 && safeTsb > -5;
-  const noAlcanzaVatios = safeWatts === 'no' || safeWatts === 'parcial';
-  const piernasMalas = safeLegs === 1;
-
-  if ((rpeAltoTsbOk && noAlcanzaVatios) || (piernasMalas && noAlcanzaVatios) || (safeRpe >= 8 && safeLegs === 1)) {
-    return 'Alta';
-  }
-  if (rpeAltoTsbOk || piernasMalas || noAlcanzaVatios) {
-    return 'Media';
-  }
-  return 'Baja';
-}
-
-function calcularZonaRecomendada(readiness) {
-  const r = safeNum(readiness, 50);
-  if (r < 35) return 'Descanso total';
-  if (r < 50) return 'Z1 - Rodaje suave';
-  if (r < 65) return 'Z2 - Base aerobica';
-  if (r < 78) return 'Tempo / Sweet Spot';
-  if (r < 90) return 'Sweet Spot / Umbral';
-  return 'Umbral / VO2 Max';
-}
-
-function getSemaforo(readiness) {
-  const r = safeNum(readiness, 50);
-  if (r < 45) return 'ROJO - No cargar';
-  if (r < 70) return 'AMARILLO - Precaucion';
-  return 'VERDE - Adelante';
-}
-
-function buildTextoStress(s) {
-  const n = safeNum(s, 2);
-  return n === 1 ? 'Bajo' : n === 2 ? 'Medio' : 'Alto';
-}
-
-function buildTextoSleep(s) {
-  const n = safeNum(s, 2);
-  return n === 1 ? 'Malo' : n === 2 ? 'Regular' : 'Bien';
-}
-
-function buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr) {
-  const r = safeNum(readiness, 50);
-  const a = safeNum(acwr, 1.0);
-  let texto = '';
-
-  if (r < 40) {
-    texto = '🔴 ROJO: Fatiga severa. Descanso total para absorber la carga.';
-  } else if (r < 55) {
-    texto = '🟠 NARANJA: Recuperación activa. El cuerpo pide Z2 suave o movilidad.';
-  } else if (r < 70) {
-    texto = '🟡 AMARILLO: Sistema disponible con reservas. Z2 controlada.';
-  } else if (r < 85) {
-    texto = '🟢 VERDE: Condición razonable para trabajo estructurado.';
-  } else {
-    texto = '🟢 VERDE: Readiness óptimo. Día ideal para calidad.';
-  }
-
-  if (fatigaOculta === 'Alta') texto += ' Hay fatiga oculta.';
-  if (a > 1.5) texto += ` ACWR ${a.toFixed(2)}: reducción obligatoria.`;
-
-  return texto;
-}
-
 // ─── COMANDOS SIMPLIFICADOS ───
 async function cmdEstado() {
   try {
@@ -2453,7 +2112,6 @@ async function cmdPlan() {
   }
 }
 
-// ─── COMANDOS ADICIONALES (RESUMEN) ───
 async function cmdClima() {
   try {
     const state = await getAthleteState();
@@ -3009,6 +2667,324 @@ async function cmdDebug() {
   await sendTelegramLong(msg);
 }
 
+// ─── WEBHOOK DE TELEGRAM ───
+app.post('/webhook', async (req, res) => {
+  try {
+    const body = req.body;
+    const message = body.message || body.edited_message || body.channel_post;
+
+    if (!message) {
+      console.log('[Webhook] Sin mensaje en el body');
+      return res.status(200).json({ ok: true });
+    }
+    
+    if (message.from && message.from.is_bot) {
+      return res.status(200).json({ ok: true });
+    }
+
+    const chatId = (message.chat && message.chat.id) ? message.chat.id.toString() : '';
+    const rawText = (message.text || '').trim();
+
+    if (!chatId || chatId !== CONFIG.CHAT_ID.toString()) {
+      console.log('[Webhook] Chat no autorizado:', chatId);
+      return res.status(200).json({ ok: true });
+    }
+
+    const uniqueKey = chatId + '_' + (message.message_id || '');
+    const lastKey = getProperty('last_msg_key');
+    if (lastKey === uniqueKey) {
+      return res.status(200).json({ ok: true });
+    }
+    setProperty('last_msg_key', uniqueKey);
+
+    if (!rawText) {
+      return res.status(200).json({ ok: true });
+    }
+
+    console.log('[Webhook] Mensaje recibido:', rawText);
+
+    // Procesar feedback
+    if (await procesarMensajeFeedback(rawText, chatId)) {
+      return res.status(200).json({ ok: true });
+    }
+
+    const parts = rawText.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+
+    // Comando /hoy con subcomandos
+    if (cmd === '/hoy') {
+      if (args.length === 0) {
+        await cmdHoy(chatId);
+      } else {
+        const sub = args[0].toLowerCase().replace('--', '');
+        switch (sub) {
+          case 'estado': await cmdEstado(); break;
+          case 'plan': await cmdPlan(); break;
+          case 'clima': await cmdClima(); break;
+          case 'nutricion': await cmdNutricion(); break;
+          case 'objetivo': await cmdObjetivo(); break;
+          case 'ayuda':
+            await sendTelegram('📋 *Subcomandos de /hoy:*\n/hoy --estado → Estado completo\n/hoy --plan → Plan del día\n/hoy --clima → Clima + factor\n/hoy --nutricion → Nutrición + recetas\n/hoy --objetivo → Plan para 296W\n/hoy (sin args) → Todo junto');
+            break;
+          default:
+            await sendTelegram('Subcomando no reconocido. Usa /hoy --ayuda');
+        }
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+    // Comandos tradicionales
+    switch (cmd) {
+      case '/start': await cmdStart(); break;
+      case '/plan': await cmdPlan(); break;
+      case '/estado': await cmdEstado(); break;
+      case '/analizar': await cmdAnalizar(); break;
+      case '/clima': await cmdClima(); break;
+      case '/ajuste': await cmdAjuste(); break;
+      case '/nutricion': await cmdNutricion(); break;
+      case '/fuerza': await cmdFuerza(); break;
+      case '/semana': await cmdSemana(); break;
+      case '/semanapasada': await cmdSemanaPasada(); break;
+      case '/consejo': await cmdConsejo(); break;
+      case '/resumen': await cmdResumen(); break;
+      case '/fatiga': await cmdFatiga(); break;
+      case '/aprender': await cmdAprender(); break;
+      case '/aprender-validar': await cmdAprenderValidar(); break;
+      case '/tendencias': await cmdTendencias(); break;
+      case '/recuperacion': await cmdRecuperacion(); break;
+      case '/prediccion': await cmdPrediccion(); break;
+      case '/progreso': await cmdProgreso(); break;
+      case '/alerta': await cmdAlerta(); break;
+      case '/densidad': await cmdDensidad(); break;
+      case '/exportar': await cmdExportar(); break;
+      case '/objetivo': await cmdObjetivo(); break;
+      case '/historial': await cmdHistorial(); break;
+      case '/zwo': await cmdZwo(args); break;
+      case '/garmin': await cmdGarmin(args); break;
+      case '/debug': await cmdDebug(); break;
+      case '/traza': await cmdTraza(); break;
+      default:
+        await sendTelegram('Comando no reconocido.\nEscribe /start para ver el menu.');
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.log('[Webhook] ERROR:', err.toString());
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PROCESAR MENSAJE FEEDBACK ───
+async function procesarMensajeFeedback(texto, chatId) {
+  const raw = getUserProperty(FEEDBACK_KEY);
+  if (!raw) return false;
+
+  let estado = {};
+  try { estado = JSON.parse(raw); } catch(e) { return false; }
+  if (!estado.esperando) return false;
+
+  const paso = estado.paso || 1;
+  const t = texto.toLowerCase().trim();
+
+  switch (paso) {
+    case 1:
+      estado.rpe = Math.min(10, Math.max(1, parseInt(t) || 5));
+      estado.paso = 2;
+      await sendTelegram('*2/5 - Cumpliste los vatios objetivo?*\nResponde: si / parcial / no');
+      break;
+
+    case 2:
+      estado.watts = (t === 'si') ? 'si' : (t === 'parcial' ? 'parcial' : 'no');
+      estado.paso = 3;
+      await sendTelegram('*3/5 - Sensacion de piernas (1-3)*\n1 = pesadas · 2 = normales · 3 = ligeras');
+      break;
+
+    case 3:
+      estado.piernas = Math.min(3, Math.max(1, parseInt(t) || 2));
+      estado.paso = 4;
+      await sendTelegram('*4/5 - Estres / carga laboral hoy (1-3)*\n1 = bajo · 2 = normal · 3 = alto');
+      break;
+
+    case 4:
+      estado.stress = Math.min(3, Math.max(1, parseInt(t) || 2));
+      estado.paso = 5;
+      await sendTelegram('*5/5 - Calidad del sueno anoche (1-3)*\n1 = mal · 2 = regular · 3 = bien');
+      break;
+
+    case 5:
+      estado.sleep = Math.min(3, Math.max(1, parseInt(t) || 2));
+
+      const datos = await obtenerDatosCompletos();
+      const hoy = datos ? datos.today : {};
+      const ctl = safeNum(hoy.ctl, 50);
+      const atl = safeNum(hoy.atl, 50);
+      const tsb = ctl - atl;
+      const acwr = calcularACWR();
+
+      const readiness = calcularReadiness(estado.rpe, estado.piernas, estado.stress, estado.sleep, tsb, atl, ctl, estado.watts);
+      const fatigaOculta = calcularFatigaOculta(estado.rpe, tsb, estado.piernas, estado.watts);
+      const semaforo = getSemaforo(readiness);
+      const zonaManana = calcularZonaRecomendada(readiness);
+      const explicacion = buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr.ratio);
+
+      let msg =
+        '━━━━━━━━━━━━━━━━━━━━━━\n' +
+        'ANALISIS DEL STAFF\n' +
+        '━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+        '*Estado general*\n' +
+        `CTL: ${ctl.toFixed(1)}  ATL: ${atl.toFixed(1)}  TSB: ${tsb.toFixed(1)}\n` +
+        `ACWR: ${acwr.ratio.toFixed(2)}\n\n` +
+        `*Readiness: ${readiness}/100*\n` +
+        `${semaforo}\n` +
+        `Fatiga oculta: ${fatigaOculta}\n` +
+        `Carga laboral: ${buildTextoStress(estado.stress)}\n` +
+        `Sueno: ${buildTextoSleep(estado.sleep)}\n\n` +
+        `*Recomendacion manana:*\n${zonaManana}\n\n` +
+        `*Staff:*\n${explicacion}`;
+
+      await sendTelegramLong(msg);
+
+      const entrenoActual = {
+        tipo: estado.tipo || 'desconocido',
+        reps: 0,
+        durMin: 0,
+        intensidad: 0,
+        tss: estado.tss || 0,
+        tsb: tsb,
+        readiness: readiness,
+        temp: datos && datos.weather ? datos.weather.temp || 25 : 25,
+        sleepQuality: estado.sleep || 2,
+        hrv: datos && datos.today ? safeNum(datos.today.hrv, 50) : 50
+      };
+
+      const feedback = {
+        rpe: estado.rpe,
+        watts: estado.watts,
+        piernas: estado.piernas,
+        stress: estado.stress,
+        sleep: estado.sleep
+      };
+
+      guardarEntrenoHistorial(entrenoActual, feedback);
+
+      deleteUserProperty(FEEDBACK_KEY);
+      return true;
+  }
+
+  setUserProperty(FEEDBACK_KEY, JSON.stringify(estado));
+  return true;
+}
+
+// ─── FUNCIONES AUXILIARES DE FEEDBACK ───
+function calcularReadiness(rpe, legs, stress, sleep, tsb, atl, ctl, watts) {
+  const safeRpe = safeNum(rpe, 5);
+  const safeLegs = safeNum(legs, 2);
+  const safeStress = safeNum(stress, 2);
+  const safeSleep = safeNum(sleep, 2);
+  const safeTsb = safeNum(tsb, 0);
+  const safeAtl = safeNum(atl, 50);
+  const safeCtl = safeNum(ctl, 50);
+  const safeWatts = (typeof watts === 'string') ? watts : 'si';
+
+  let score = 100;
+
+  if (safeRpe >= 9) score -= 35;
+  else if (safeRpe >= 8) score -= 25;
+  else if (safeRpe >= 7) score -= 15;
+  else if (safeRpe >= 5) score -= 5;
+
+  if (safeLegs === 1) score -= 20;
+  else if (safeLegs === 2) score -= 5;
+
+  if (safeSleep === 1) score -= 20;
+  else if (safeSleep === 2) score -= 5;
+
+  if (safeStress === 3) score -= 15;
+  else if (safeStress === 2) score -= 5;
+
+  if (safeWatts === 'no') score -= 15;
+  else if (safeWatts === 'parcial') score -= 7;
+
+  if (safeTsb < -20) score -= 10;
+  else if (safeTsb > 10) score += 5;
+
+  const ratio = (safeCtl > 0) ? (safeAtl / safeCtl) : 1;
+  if (ratio > 1.4) score -= 15;
+  else if (ratio > 1.2) score -= 8;
+
+  return Math.max(5, Math.min(100, Math.round(score)));
+}
+
+function calcularFatigaOculta(rpe, tsb, legs, watts) {
+  const safeRpe = safeNum(rpe, 5);
+  const safeTsb = safeNum(tsb, 0);
+  const safeLegs = safeNum(legs, 2);
+  const safeWatts = (typeof watts === 'string') ? watts : 'si';
+
+  const rpeAltoTsbOk = safeRpe >= 7 && safeTsb > -5;
+  const noAlcanzaVatios = safeWatts === 'no' || safeWatts === 'parcial';
+  const piernasMalas = safeLegs === 1;
+
+  if ((rpeAltoTsbOk && noAlcanzaVatios) || (piernasMalas && noAlcanzaVatios) || (safeRpe >= 8 && safeLegs === 1)) {
+    return 'Alta';
+  }
+  if (rpeAltoTsbOk || piernasMalas || noAlcanzaVatios) {
+    return 'Media';
+  }
+  return 'Baja';
+}
+
+function calcularZonaRecomendada(readiness) {
+  const r = safeNum(readiness, 50);
+  if (r < 35) return 'Descanso total';
+  if (r < 50) return 'Z1 - Rodaje suave';
+  if (r < 65) return 'Z2 - Base aerobica';
+  if (r < 78) return 'Tempo / Sweet Spot';
+  if (r < 90) return 'Sweet Spot / Umbral';
+  return 'Umbral / VO2 Max';
+}
+
+function getSemaforo(readiness) {
+  const r = safeNum(readiness, 50);
+  if (r < 45) return 'ROJO - No cargar';
+  if (r < 70) return 'AMARILLO - Precaucion';
+  return 'VERDE - Adelante';
+}
+
+function buildTextoStress(s) {
+  const n = safeNum(s, 2);
+  return n === 1 ? 'Bajo' : n === 2 ? 'Medio' : 'Alto';
+}
+
+function buildTextoSleep(s) {
+  const n = safeNum(s, 2);
+  return n === 1 ? 'Malo' : n === 2 ? 'Regular' : 'Bien';
+}
+
+function buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr) {
+  const r = safeNum(readiness, 50);
+  const a = safeNum(acwr, 1.0);
+  let texto = '';
+
+  if (r < 40) {
+    texto = '🔴 ROJO: Fatiga severa. Descanso total para absorber la carga.';
+  } else if (r < 55) {
+    texto = '🟠 NARANJA: Recuperación activa. El cuerpo pide Z2 suave o movilidad.';
+  } else if (r < 70) {
+    texto = '🟡 AMARILLO: Sistema disponible con reservas. Z2 controlada.';
+  } else if (r < 85) {
+    texto = '🟢 VERDE: Condición razonable para trabajo estructurado.';
+  } else {
+    texto = '🟢 VERDE: Readiness óptimo. Día ideal para calidad.';
+  }
+
+  if (fatigaOculta === 'Alta') texto += ' Hay fatiga oculta.';
+  if (a > 1.5) texto += ` ACWR ${a.toFixed(2)}: reducción obligatoria.`;
+
+  return texto;
+}
+
 // ─── RUTAS DE ESTADO ───
 app.get('/health', (req, res) => {
   res.json({
@@ -3042,8 +3018,7 @@ app.get('/', (req, res) => {
       'GET /': 'Información del servidor',
       'GET /health': 'Estado de salud del servidor',
       'GET /ping': 'Ping para mantener activo',
-      'POST /webhook': 'Webhook para Telegram',
-      'GET /webhook': 'Verificar configuración'
+      'POST /webhook': 'Webhook para Telegram'
     },
     config: {
       ftp: CONFIG.FTP,
@@ -3074,7 +3049,7 @@ app.use((err, req, res, next) => {
 });
 
 // ─── INICIAR SERVIDOR ───
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`✅ WORLD TOUR COACH v9.1 - NODE.JS`);
   console.log(`📡 Servidor corriendo en puerto ${PORT}`);
