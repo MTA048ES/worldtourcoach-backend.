@@ -54,15 +54,6 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// ─── WEBHOOK DE PRUEBA PARA RAILWAY ───
-app.post('/webhook', (req, res) => {
-  console.log('✅ Ruta /webhook consultada correctamente');
-  res.json({
-    ok: true,
-    message: 'Webhook recibido correctamente'
-  });
-});
-
 // ─── CONFIGURACIÓN (CORREGIDA) ───
 const CONFIG = {
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
