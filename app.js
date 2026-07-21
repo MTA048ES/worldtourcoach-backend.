@@ -2774,6 +2774,83 @@ function buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr) {
   return texto;
 }
 
+// ─── RUTAS PARA EL FRONTEND ───
+app.get('/api/estado', async (req, res) => {
+  try {
+    console.log('📊 Frontend solicitó /api/estado');
+    const state = await getAthleteState();
+    if (!state) {
+      return res.status(404).json({ success: false, error: 'No se pudo obtener el estado' });
+    }
+    res.json({
+      success: true,
+      tsb: state.tsb,
+      readiness: state.readiness,
+      estado: state.estado,
+      decision: state.decision,
+      entreno: state.entreno,
+      nutricion: state.nutricion,
+      fuerza: state.fuerza,
+      consejo: state.consejo,
+      datos: state.datos,
+      haceCalor: state.haceCalor
+    });
+  } catch (err) {
+    console.log('[api/estado] ERROR:', err.toString());
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/comando', async (req, res) => {
+  try {
+    console.log('📩 Frontend solicitó /api/comando:', req.body);
+    const { comando } = req.body;
+    if (!comando) {
+      return res.status(400).json({ success: false, error: 'Falta el comando' });
+    }
+    let respuesta = '';
+    switch (comando) {
+      case '/hoy':
+        const state = await getAthleteState();
+        if (!state) {
+          respuesta = '❌ Sin datos disponibles';
+        } else {
+          respuesta = `🌅 WORLD TOUR COACH - HOY\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO\n• Readiness: ${state.readiness}/100\n• TSB: ${state.tsb.toFixed(1)}\n• CTL: ${state.estado.ctl.toFixed(1)} | ATL: ${state.estado.atl.toFixed(1)}\n\n🚴 PLAN\n• ${state.decision.tipo.toUpperCase()} ${state.decision.durMin}min\n• Vatios: ${state.entreno.wLow}-${state.entreno.wHigh}W`;
+        }
+        break;
+      case '/plan':
+        const statePlan = await getAthleteState();
+        if (!statePlan) {
+          respuesta = '❌ Sin datos disponibles';
+        } else {
+          respuesta = `🧠 PLAN DEL DÍA\n━━━━━━━━━━━━━━━━━━━━━━\n\nTipo: ${statePlan.decision.tipo.toUpperCase()}\nDuración: ${statePlan.decision.durMin}min\nIntensidad: ${(statePlan.decision.intensidad * 100).toFixed(0)}% FTP\nVatios: ${statePlan.entreno.wLow}-${statePlan.entreno.wHigh}W`;
+        }
+        break;
+      default:
+        respuesta = `📋 Comando "${comando}" no disponible desde la web.\nComandos: /hoy, /plan`;
+    }
+    res.json({ success: true, respuesta });
+  } catch (err) {
+    console.log('[api/comando] ERROR:', err.toString());
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/config', (req, res) => {
+  console.log('⚙️ Frontend solicitó /api/config');
+  res.json({
+    success: true,
+    data: {
+      ftp: CONFIG.FTP,
+      weight: CONFIG.WEIGHT_KG,
+      age: CONFIG.AGE_YEARS,
+      city: CONFIG.CITY,
+      objetivo: CONFIG.FTP_HISTORICO.valor,
+      timezone: CONFIG.TIMEZONE
+    }
+  });
+});
+
 // ─── RUTAS DE ESTADO ───
 app.get('/health', (req, res) => {
   res.json({
@@ -2807,7 +2884,10 @@ app.get('/', (req, res) => {
       'GET /': 'Información del servidor',
       'GET /health': 'Estado de salud del servidor',
       'GET /ping': 'Ping para mantener activo',
-      'POST /webhook': 'Webhook para Telegram'
+      'POST /webhook': 'Webhook para Telegram',
+      'GET /api/estado': 'Estado del atleta',
+      'POST /api/comando': 'Ejecutar comandos',
+      'GET /api/config': 'Configuración del sistema'
     },
     config: {
       ftp: CONFIG.FTP,
@@ -2825,7 +2905,15 @@ app.use((req, res) => {
     error: 'Ruta no encontrada',
     path: req.path,
     method: req.method,
-    availableEndpoints: ['/', '/health', '/ping', '/webhook (POST)']
+    availableEndpoints: [
+      '/',
+      '/health',
+      '/ping',
+      '/webhook (POST)',
+      '/api/estado',
+      '/api/comando (POST)',
+      '/api/config'
+    ]
   });
 });
 
