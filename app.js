@@ -63,9 +63,9 @@ app.post('/webhook', (req, res) => {
   });
 });
 
-// ─── CONFIGURACIÓN ───
+// ─── CONFIGURACIÓN (CORREGIDA) ───
 const CONFIG = {
-  TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN,
+  TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
   CHAT_ID: process.env.CHAT_ID,
   INTERVALS_API_KEY: process.env.INTERVALS_API_KEY,
   ATHLETE_ID: process.env.ATHLETE_ID,
@@ -98,6 +98,11 @@ const CONFIG = {
     maxDiasAntiguos: 90
   }
 };
+
+console.log('🔑 Telegram Token:', CONFIG.TELEGRAM_TOKEN ? '✅ Configurado' : '❌ FALTA');
+console.log('📱 CHAT_ID:', CONFIG.CHAT_ID || '❌ FALTA');
+console.log('📊 FTP:', CONFIG.FTP, 'W');
+console.log('🌍 CIUDAD:', CONFIG.CITY);
 
 // ─── SUPABASE ───
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qhtwueashkqbqytfwpwi.supabase.co';
