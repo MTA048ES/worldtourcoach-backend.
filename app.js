@@ -31,7 +31,10 @@ app.get('/', (req, res) => {
       'GET /': 'Información del servidor',
       'GET /health': 'Estado de salud',
       'GET /ping': 'Mantener activo',
-      'POST /webhook': 'Webhook para Telegram'
+      'POST /webhook': 'Webhook para Telegram',
+      'GET /api/estado': 'Estado del atleta',
+      'POST /api/comando': 'Ejecutar comandos',
+      'GET /api/config': 'Configuración del sistema'
     }
   });
 });
@@ -54,7 +57,7 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// ─── CONFIGURACIÓN (CORREGIDA) ───
+// ─── CONFIGURACIÓN ───
 const CONFIG = {
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
   CHAT_ID: process.env.CHAT_ID,
@@ -1179,16 +1182,106 @@ function aplicarFactorClima(decision, temp) {
   return decision;
 }
 
-function generarEntrenamiento(tipo, reps, durMin, recSec) {
-  const ftp = CONFIG.FTP || 240;
+// ================================================================
+// ═══════════════════════════════════════════════════════════════════
+// 🔹 NUEVO MOTOR DE DECISIÓN ÚNICO (SINGLE SOURCE OF TRUTH)
+// ═══════════════════════════════════════════════════════════════════
 
-  if (!tipo) {
-    tipo = 'z2';
-    reps = reps || 1;
-    durMin = durMin || 60;
-    recSec = recSec || 0;
+/**
+ * generateWorkout() - ÚNICO GENERADOR DE ENTRENAMIENTOS
+ * 
+ * Este es el CEREBRO del sistema. Solo esta función decide
+ * qué entrenamiento hacer hoy. Ningún comando puede generar
+ * su propio entrenamiento.
+ */
+function generateWorkout(state, restricciones, decision, traza) {
+  // ─── 1. VALIDAR ENTRADAS ───
+  if (!state || !decision) {
+    console.warn('[generateWorkout] Datos insuficientes, usando fallback');
+    return createFallbackWorkout();
   }
 
+  // ─── 2. EXTRAER DATOS BASE ───
+  const ftp = CONFIG.FTP || 240;
+  const tipo = decision.tipo || 'z2';
+  const reps = decision.reps || 1;
+  const durMin = decision.durMin || 45;
+  const recSec = decision.recSec || 0;
+  const intensidad = decision.intensidad || 0.65;
+
+  // ─── 3. GENERAR BLOQUES DE ENTRENAMIENTO ───
+  const bloques = generarBloques(tipo, reps, durMin, recSec, ftp, intensidad);
+
+  // ─── 4. CALCULAR MÉTRICAS ───
+  const metricas = calcularMetricas(bloques, ftp);
+
+  // ─── 5. CONSTRUIR WORKOUT ───
+  const workout = {
+    fecha: new Date().toISOString(),
+    tipo: tipo,
+    objetivo: decision.prioridad || 'base',
+    bloques: bloques,
+    reps: reps,
+    durMin: durMin,
+    recSec: recSec,
+    duracionTotalMin: bloques.reduce((sum, b) => sum + b.duracionMin, 0),
+    intensidadFTP: intensidad,
+    ftp: ftp,
+    vatios: {
+      low: Math.round(ftp * intensidad * 0.92),
+      high: Math.round(ftp * intensidad * 1.08),
+      avg: Math.round(ftp * intensidad)
+    },
+    ifEsperado: metricas.if,
+    tssEsperado: metricas.tss,
+    kjEsperados: metricas.kj,
+    carbsEsperados: metricas.carbs,
+    motivo: decision.motivo || 'Plan base',
+    prioridad: decision.prioridad || 'base',
+    notaHidratacion: decision.notaHidratacion || '💧 500ml/hora',
+    nutricion: {
+      chTotalDia: state.nutricion?.chTotalDia || 300,
+      protTotalDia: state.nutricion?.protTotalDia || 120,
+      grasaDiaria: state.nutricion?.grasaDiaria || 60,
+      hidratacion: state.nutricion?.hidratacion || '2L base'
+    },
+    fuerza: state.fuerza || { nivel: 'Básico', ejercicios: [], recomendado: true },
+    decisionTrace: traza || null,
+    estado: {
+      tsb: state.tsb || 0,
+      readiness: state.readiness || 50,
+      ctl: state.estado?.ctl || 50,
+      atl: state.estado?.atl || 50,
+      sleepQuality: state.estado?.sleepQuality || 2,
+      hrv: state.estado?.hrv || 50
+    },
+    meta: {
+      objetivo: CONFIG.FTP_HISTORICO.valor || 296,
+      diff: (CONFIG.FTP_HISTORICO.valor || 296) - ftp
+    }
+  };
+
+  console.log('[generateWorkout] ✅ Workout generado:', workout.tipo, workout.reps + 'x' + workout.durMin + 'min');
+  return workout;
+}
+
+/**
+ * generarBloques() - Genera la estructura de bloques del entrenamiento
+ */
+function generarBloques(tipo, reps, durMin, recSec, ftp, intensidad) {
+  const bloques = [];
+  
+  // ─── CALENTAMIENTO ───
+  bloques.push({
+    tipo: 'warmup',
+    nombre: 'Calentamiento',
+    duracionMin: 10,
+    vatios: { low: Math.round(ftp * 0.45), high: Math.round(ftp * 0.55) },
+    intensidad: 0.50
+  });
+
+  // ─── BLOQUES PRINCIPALES ───
+  const tipoLimpio = tipo.toLowerCase().trim();
   const pcts = {
     sweetspot: { low: 0.88, high: 0.93 },
     vo2: { low: 1.10, high: 1.20 },
@@ -1198,82 +1291,117 @@ function generarEntrenamiento(tipo, reps, durMin, recSec) {
     z3: { low: 0.75, high: 0.87 }
   };
 
-  const tipoLimpio = tipo.toLowerCase().trim();
   const zona = pcts[tipoLimpio] || pcts.z2;
   const wLow = Math.round(ftp * zona.low);
   const wHigh = Math.round(ftp * zona.high);
-  const wAvg = (wLow + wHigh) / 2;
 
-  const wuDur = tipoLimpio === 'vo2' ? 900 : 600;
-  const wuPct = tipoLimpio === 'vo2' ? 0.60 : 0.55;
-
-  const duracionTotalSec = wuDur + (reps * durMin * 60) + (reps > 1 ? (reps - 1) * recSec : 0) + 600;
-  const duracionTotalMin = Math.round(duracionTotalSec / 60);
-
-  let tssAcumulado = 0;
-  tssAcumulado += (wuDur / 3600) * Math.pow(wuPct, 2) * 100;
-  tssAcumulado += ((reps * durMin * 60) / 3600) * Math.pow((wAvg / ftp), 2) * 100;
-  if (reps > 1) {
-    tssAcumulado += (((reps - 1) * recSec) / 3600) * Math.pow(0.50, 2) * 100;
+  for (let i = 0; i < reps; i++) {
+    const nombre = reps > 1 ? `Repetición ${i+1}` : 'Bloque principal';
+    bloques.push({
+      tipo: 'main',
+      nombre: nombre,
+      duracionMin: durMin,
+      vatios: { low: Math.round(wLow * 0.95), high: Math.round(wHigh * 1.05) },
+      intensidad: intensidad
+    });
+    
+    // ─── RECUPERACIÓN ENTRE BLOQUES ───
+    if (i < reps - 1 && recSec > 0) {
+      bloques.push({
+        tipo: 'recovery',
+        nombre: 'Recuperación',
+        duracionMin: Math.round(recSec / 60),
+        vatios: { low: Math.round(ftp * 0.40), high: Math.round(ftp * 0.50) },
+        intensidad: 0.45
+      });
+    }
   }
-  tssAcumulado += (600 / 3600) * Math.pow(0.45, 2) * 100;
 
-  const tssEsperado = Math.round(tssAcumulado);
-  const ifEsperado = (wAvg / ftp).toFixed(2);
+  // ─── VUELTA A LA CALMA ───
+  bloques.push({
+    tipo: 'cooldown',
+    nombre: 'Vuelta a la calma',
+    duracionMin: 10,
+    vatios: { low: Math.round(ftp * 0.35), high: Math.round(ftp * 0.45) },
+    intensidad: 0.40
+  });
 
-  const wMediosEstimados = ((wuDur * (ftp * wuPct)) + ((reps * durMin * 60) * wAvg) + (600 * (ftp * 0.45))) / duracionTotalSec;
-  const kjEsperados = Math.round((wMediosEstimados * duracionTotalSec) / 1000);
+  return bloques;
+}
 
+/**
+ * calcularMetricas() - Calcula TSS, IF, KJ, CARBS
+ */
+function calcularMetricas(bloques, ftp) {
+  let tssTotal = 0;
+  let kjTotal = 0;
+  let duracionTotalSeg = 0;
+  let potenciaMedia = 0;
+
+  bloques.forEach(bloque => {
+    const durSeg = bloque.duracionMin * 60;
+    const wAvg = (bloque.vatios.low + bloque.vatios.high) / 2;
+    const ifFactor = wAvg / ftp;
+    
+    tssTotal += (durSeg / 3600) * Math.pow(ifFactor, 2) * 100;
+    kjTotal += (wAvg * durSeg) / 1000;
+    duracionTotalSeg += durSeg;
+    potenciaMedia += wAvg * durSeg;
+  });
+
+  potenciaMedia = duracionTotalSeg > 0 ? potenciaMedia / duracionTotalSeg : 0;
+  const ifEsperado = ftp > 0 ? (potenciaMedia / ftp) : 0.65;
+  
+  // ─── CARBOHIDRATOS ───
   const eficienciaMetabolica = 0.22;
-  const kcalTotales = kjEsperados / (eficienciaMetabolica * 4.184);
+  const kcalTotales = kjTotal / (eficienciaMetabolica * 4.184);
   let pctCarbs = 0.50;
   if (ifEsperado > 0.85) pctCarbs = 0.85;
   else if (ifEsperado > 0.75) pctCarbs = 0.70;
-
   const carbsEsperados = Math.round((kcalTotales * pctCarbs) / 4);
 
   return {
-    tipo: tipo.toUpperCase(),
-    reps,
-    durMin,
-    recSec,
-    titulo: `AI-${tipo.toUpperCase()} ${reps}x${durMin}m`,
-    wLow,
-    wHigh,
-    wRec: Math.round(ftp * 0.50),
-    wWU: Math.round(ftp * wuPct),
-    wCD: Math.round(ftp * 0.45),
-    wuDur,
-    ifEsperado,
-    tssEsperado,
-    kjEsperados,
-    carbsEsperados,
-    duracionTotalMin
+    tss: Math.round(tssTotal),
+    if: ifEsperado.toFixed(2),
+    kj: Math.round(kjTotal),
+    carbs: carbsEsperados
   };
 }
 
-function construirEntrenamiento(decision, ftp) {
-  if (decision.tipo === 'descanso') {
-    return {
-      tipo: 'DESCANSO',
-      duracion: 0,
-      mensaje: `🧠 *DESCANSO OBLIGATORIO*\n━━━━━━━━━━━━━━━━━━━━━━\nMotivo: ${decision.motivo}\n\nRecomendación: Movilidad suave o descanso total.`
-    };
-  }
-
-  const entreno = generarEntrenamiento(
-    decision.tipo,
-    decision.reps || 1,
-    decision.durMin || 60,
-    decision.recSec || 0
-  );
-
-  entreno.prioridad = decision.prioridad;
-  entreno.motivo = decision.motivo;
-  entreno.intensidadObjetivo = decision.intensidad;
-  entreno.notaHidratacion = decision.notaHidratacion || '💧 Hidratación normal';
-
-  return entreno;
+/**
+ * createFallbackWorkout() - Workout de seguridad si algo falla
+ */
+function createFallbackWorkout() {
+  const ftp = CONFIG.FTP || 240;
+  return {
+    fecha: new Date().toISOString(),
+    tipo: 'z2',
+    objetivo: 'base',
+    bloques: [
+      { tipo: 'warmup', nombre: 'Calentamiento', duracionMin: 10, vatios: { low: 120, high: 140 }, intensidad: 0.55 },
+      { tipo: 'main', nombre: 'Bloque principal', duracionMin: 45, vatios: { low: 150, high: 170 }, intensidad: 0.65 },
+      { tipo: 'cooldown', nombre: 'Vuelta a la calma', duracionMin: 10, vatios: { low: 100, high: 120 }, intensidad: 0.45 }
+    ],
+    reps: 1,
+    durMin: 45,
+    recSec: 0,
+    duracionTotalMin: 65,
+    intensidadFTP: 0.65,
+    ftp: ftp,
+    vatios: { low: 150, high: 170, avg: 160 },
+    ifEsperado: '0.65',
+    tssEsperado: 80,
+    kjEsperados: 400,
+    carbsEsperados: 50,
+    motivo: 'Plan base por defecto (fallback)',
+    prioridad: 'base',
+    notaHidratacion: '💧 500ml/hora',
+    nutricion: { chTotalDia: 300, protTotalDia: 120, grasaDiaria: 60, hidratacion: '2L base' },
+    fuerza: { nivel: 'Básico', ejercicios: ['Plancha: 3x30"', 'Sentadilla: 3x10'], recomendado: true },
+    decisionTrace: null,
+    estado: { tsb: 0, readiness: 50, ctl: 50, atl: 50, sleepQuality: 2, hrv: 50 },
+    meta: { objetivo: CONFIG.FTP_HISTORICO?.valor || 296, diff: (CONFIG.FTP_HISTORICO?.valor || 296) - ftp }
+  };
 }
 
 // ─── FUNCIONES UNIFICADAS ───
@@ -1483,48 +1611,65 @@ async function getAthleteState() {
     registrarInputTraza(traza, 'pasos', estado.pasos, 'Pasos diarios');
     console.log('[getAthleteState] 3. Estado OK. TSB:', estado.tsb);
 
+    console.log('[getAthleteState] 4. Aplicando restricciones...');
     const restricciones = aplicarRestriccionesGlobales(estado, CONFIG.AGE_YEARS || 43);
     if (!restricciones || typeof restricciones !== 'object') {
       console.log('[getAthleteState] ❌ restricciones inválidas');
       return null;
     }
-    console.log('[getAthleteState] 4. Restricciones OK.');
 
+    console.log('[getAthleteState] 5. Decidiendo entrenamiento...');
     let decision = decidirEntrenamiento(estado, restricciones);
     if (!decision || typeof decision !== 'object' || !decision.tipo) {
       console.log('[getAthleteState] ❌ decision inválida o sin tipo');
       return null;
     }
-    console.log('[getAthleteState] 5. Decision OK. Tipo:', decision.tipo);
+    console.log('[getAthleteState] 6. Decision OK. Tipo:', decision.tipo);
 
-    let decisionClima = aplicarFactorClima(decision, estado.tempActual);
-    if (!decisionClima || typeof decisionClima !== 'object' || !decisionClima.tipo) {
+    console.log('[getAthleteState] 7. Aplicando factor clima...');
+    decision = aplicarFactorClima(decision, estado.tempActual);
+    if (!decision || typeof decision !== 'object' || !decision.tipo) {
       console.log('[getAthleteState] ❌ decisionClima inválida');
       return null;
     }
-    decision = decisionClima;
-    console.log('[getAthleteState] 6. Factor clima aplicado. Nuevo tipo:', decision.tipo);
-
+    console.log('[getAthleteState] 8. Resolviendo conflictos...');
+    
     const decisionResuelta = resolverConflictos(estado, restricciones, decision, traza);
     if (decisionResuelta && typeof decisionResuelta === 'object' && decisionResuelta.tipo) {
       decision = decisionResuelta;
-      console.log('[getAthleteState] 7. Conflict Resolver aplicado. Tipo:', decision.tipo);
-    } else {
-      console.log('[getAthleteState] ⚠️ Conflict Resolver no devolvió decisión válida. Usando decision original.');
+      console.log('[getAthleteState] 9. Conflict Resolver aplicado. Tipo:', decision.tipo);
     }
 
+    // ─── ASEGURAR VALORES POR DEFECTO ───
     if (!decision.reps) decision.reps = 1;
     if (!decision.durMin) decision.durMin = 45;
     if (!decision.recSec) decision.recSec = 0;
     if (!decision.intensidad) decision.intensidad = 0.65;
     if (!decision.motivo) decision.motivo = 'Plan base';
 
-    const entreno = construirEntrenamiento(decision, CONFIG.FTP);
-    if (!entreno || typeof entreno !== 'object') {
-      console.log('[getAthleteState] ❌ entreno inválido');
-      return null;
-    }
-    console.log('[getAthleteState] 8. Entreno OK.');
+    // ─── GENERAR WORKOUT (SINGLE SOURCE OF TRUTH) ───
+    console.log('[getAthleteState] 10. Generando Workout...');
+    const workout = generateWorkout(estado, restricciones, decision, traza);
+
+    // ─── NUTRICIÓN Y FUERZA (para compatibilidad) ───
+    const entreno = {
+      tipo: workout.tipo.toUpperCase(),
+      reps: workout.reps,
+      durMin: workout.durMin,
+      recSec: workout.recSec,
+      wLow: workout.vatios.low,
+      wHigh: workout.vatios.high,
+      wRec: Math.round(workout.ftp * 0.50),
+      wWU: workout.bloques.find(b => b.tipo === 'warmup')?.vatios?.low || Math.round(workout.ftp * 0.55),
+      wCD: workout.bloques.find(b => b.tipo === 'cooldown')?.vatios?.low || Math.round(workout.ftp * 0.45),
+      ifEsperado: workout.ifEsperado,
+      tssEsperado: workout.tssEsperado,
+      kjEsperados: workout.kjEsperados,
+      carbsEsperados: workout.carbsEsperados,
+      duracionTotalMin: workout.duracionTotalMin,
+      wuDur: 600,
+      titulo: `AI-${workout.tipo.toUpperCase()} ${workout.reps}x${workout.durMin}m`
+    };
 
     const nutricion = calcularNutricionUnificada(estado, entreno);
     const fuerza = calcularFuerzaUnificada(estado);
@@ -1536,7 +1681,7 @@ async function getAthleteState() {
     registrarDecisionTraza(traza, decision.tipo, decision.prioridad || 'NIVEL 4 - PLAN');
     guardarTraza(traza);
 
-    console.log('[getAthleteState] ✅ Todo OK. Devolviendo state.');
+    console.log('[getAthleteState] ✅ Todo OK. Devolviendo state con Workout.');
 
     return {
       timestamp: new Date(),
@@ -1544,15 +1689,12 @@ async function getAthleteState() {
       estado,
       restricciones,
       decision,
-      entreno,
+      workout: workout,           // ← NUEVO: Workout completo (SINGLE SOURCE OF TRUTH)
+      entreno: entreno,           // ← COMPATIBILIDAD: para código existente
       nutricion,
       fuerza,
       consejo,
       traza,
-      aprendizaje: {
-        stats,
-        probabilidad
-      },
       tsb: estado.tsb,
       readiness: estado.readiness,
       tempActual: estado.tempActual,
@@ -1695,6 +1837,9 @@ async function cmdHoy(chatId) {
       return;
     }
 
+    // Usar el workout (SINGLE SOURCE OF TRUTH)
+    const workout = state.workout;
+
     let msg = '🌅 *WORLD TOUR COACH v9.1 - HOY*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
@@ -1715,20 +1860,32 @@ async function cmdHoy(chatId) {
       msg += '• Usa /objetivo para ver el plan completo\n\n';
     }
 
-    if (state.decision.tipo === 'descanso') {
+    // ─── MOSTRAR WORKOUT (SINGLE SOURCE OF TRUTH) ───
+    if (workout.tipo === 'descanso') {
       msg += '*🧘 HOY TOCA: DESCANSO TOTAL*\n';
-      msg += `Motivo: ${state.decision.motivo}\n\n`;
+      msg += `Motivo: ${workout.motivo}\n\n`;
     } else {
       msg += '*🚴 HOY TOCA*\n';
-      msg += `• ${state.decision.tipo.toUpperCase()}`;
-      if (state.decision.reps > 0) msg += ` ${state.decision.reps}x${state.decision.durMin}min\n`;
-      else msg += ` ${state.decision.durMin}min\n`;
-      msg += `• Intensidad: ${(state.decision.intensidad * 100).toFixed(0)}% FTP\n`;
-      msg += `• Vatios: ${state.entreno.wLow}-${state.entreno.wHigh}W\n`;
-      if (state.entreno && state.entreno.tssEsperado) {
-        msg += `• TSS: ${state.entreno.tssEsperado} | IF: ${state.entreno.ifEsperado}\n`;
+      msg += `• ${workout.tipo.toUpperCase()}`;
+      if (workout.reps > 0) msg += ` ${workout.reps}x${workout.durMin}min\n`;
+      else msg += ` ${workout.durMin}min\n`;
+      msg += `• Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP\n`;
+      msg += `• Vatios: ${workout.vatios.low}-${workout.vatios.high}W\n`;
+      if (workout.tssEsperado) {
+        msg += `• TSS: ${workout.tssEsperado} | IF: ${workout.ifEsperado}\n`;
       }
-      if (state.decision.notaHidratacion) msg += `• ${state.decision.notaHidratacion}\n`;
+      if (workout.notaHidratacion) msg += `• ${workout.notaHidratacion}\n`;
+      
+      // ─── MOSTRAR BLOQUES ───
+      if (workout.bloques && workout.bloques.length > 0) {
+        msg += '\n*📋 ESTRUCTURA DEL ENTRENO*\n';
+        workout.bloques.forEach(bloque => {
+          const emoji = bloque.tipo === 'warmup' ? '🔥' : 
+                         bloque.tipo === 'main' ? '⚡' : 
+                         bloque.tipo === 'recovery' ? '💨' : '❄️';
+          msg += `• ${emoji} ${bloque.nombre}: ${bloque.vatios.low}-${bloque.vatios.high}W (${bloque.duracionMin}min)\n`;
+        });
+      }
       msg += '\n';
     }
 
@@ -1742,7 +1899,7 @@ async function cmdHoy(chatId) {
       msg += '*🌤️ CLIMA*\n';
       msg += `• ${tempEmoji} ${temp}°C | Viento ${wind} km/h\n`;
       msg += `• ${desc}${rain > 0 ? ' | 🌧️ Lluvia' : ''}\n`;
-      if (state.decision.tipo !== 'descanso') {
+      if (workout.tipo !== 'descanso') {
         if (typeof temp === 'number' && temp > 35) msg += '• ⚠️ Calor extremo - Rodillo recomendado\n';
         else if (typeof temp === 'number' && temp > 30) msg += '• ⚠️ Calor alto - Salida controlada\n';
         else msg += '• ✅ Condiciones favorables\n';
@@ -1750,29 +1907,29 @@ async function cmdHoy(chatId) {
       msg += '\n';
     }
 
-    if (state.decision.tipo !== 'descanso' && state.entreno && state.entreno.carbsEsperados) {
+    if (workout.tipo !== 'descanso' && workout.carbsEsperados) {
       msg += '*🍏 NUTRICIÓN*\n';
-      msg += `• CH durante entreno: ${state.entreno.carbsEsperados}g\n`;
-      msg += `• Post-entreno: ${Math.round(state.entreno.carbsEsperados * 0.8)}g CH + 30g Proteína\n`;
-      msg += `• ${state.nutricion.hidratacion}\n\n`;
+      msg += `• CH durante entreno: ${workout.carbsEsperados}g\n`;
+      msg += `• Post-entreno: ${Math.round(workout.carbsEsperados * 0.8)}g CH + 30g Proteína\n`;
+      msg += `• ${workout.nutricion.hidratacion}\n\n`;
 
       msg += '🍳 *Receta rápida post-entreno*\n';
       msg += 'Batido recuperador:\n';
       msg += '• 300ml leche o bebida vegetal\n';
       msg += '• 1 plátano\n';
-      msg += `• ${Math.round(state.entreno.carbsEsperados * 0.6)}g avena o miel\n`;
+      msg += `• ${Math.round(workout.carbsEsperados * 0.6)}g avena o miel\n`;
       msg += '• 30g proteína de suero\n';
       msg += '• Hielo al gusto\n\n';
     } else {
       msg += '*🍏 NUTRICIÓN*\n';
       msg += '• Día de descanso: Prioriza proteína y vegetales\n';
-      msg += `• ${state.nutricion.hidratacion}\n\n`;
+      msg += `• ${workout.nutricion.hidratacion}\n\n`;
     }
 
     msg += '*🏋️ FUERZA*\n';
-    if (state.fuerza.recomendado) {
-      msg += `• ${state.fuerza.nivel} (${state.fuerza.duracion})\n`;
-      msg += `• ${state.fuerza.ejercicios.slice(0, 3).join(' | ')}\n`;
+    if (workout.fuerza.recomendado) {
+      msg += `• ${workout.fuerza.nivel} (${workout.fuerza.duracion})\n`;
+      msg += `• ${workout.fuerza.ejercicios.slice(0, 3).join(' | ')}\n`;
     } else {
       msg += '• No recomendada hoy (fatiga alta)\n';
       msg += '• Haz solo movilidad y estiramientos\n';
@@ -1803,7 +1960,7 @@ async function cmdHoy(chatId) {
     state.consejo.forEach((c) => { msg += `• ${c}\n`; });
 
     msg += '\n*🧠 MÁXIMA DEL COACH*\n';
-    if (state.decision.tipo === 'descanso') {
+    if (workout.tipo === 'descanso') {
       msg += '_La mejor sesión de hoy es la que no haces. Recupera para rendir mañana._';
     } else if (state.haceCalor && state.tempActual > 35) {
       msg += `_Con ${state.tempActual}°C, la calidad se reduce. Mejor intensidad controlada que volumen vacío._`;
@@ -1913,59 +2070,45 @@ async function cmdTraza() {
   }
 }
 
-// ─── COMANDO ZWO ───
+// ─── COMANDO ZWO (REFACTORIZADO - USA WORKOUT) ───
 async function cmdZwo(args) {
   try {
-    if (!args || typeof args !== 'object') {
-      args = [];
-    }
-
     const state = await getAthleteState();
-    if (!state || state.decision.tipo === 'descanso') {
+    if (!state || !state.workout) {
       await sendTelegram('⚠️ No hay plan de entreno activo o es día de descanso.');
       return;
     }
 
-    const tipo = args[0] ? args[0].toLowerCase().trim() : state.decision.tipo || 'z2';
-    let reps = args[1] ? parseInt(args[1], 10) : (state.decision.reps || 3);
-    let dur = args[2] ? parseInt(args[2], 10) : (state.decision.durMin || 8);
-    let rec = args[3] ? parseInt(args[3], 10) : (state.decision.recSec || 120);
+    const workout = state.workout;
 
-    if (isNaN(reps)) reps = 3;
-    if (isNaN(dur)) dur = 8;
-    if (isNaN(rec)) rec = 120;
-
-    const entreno = generarEntrenamiento(tipo, reps, dur, rec);
-    if (!entreno) {
-      await sendTelegram('❌ No se pudo generar el entreno.');
+    if (workout.tipo === 'descanso') {
+      await sendTelegram('🧘 Es día de descanso. No hay entrenamiento para exportar.');
       return;
     }
 
+    // ─── CONSTRUIR MENSAJE ZWO (SIN RECALCULAR) ───
     let msg = '📄 *ARCHIVO ZWO PARA RODILLO*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    msg += `*Tipo:* ${tipo.toUpperCase()}\n`;
-    msg += `*Estructura:* ${reps}x${dur} min\n`;
-    if (rec > 0) msg += `*Recuperación:* ${rec} seg\n`;
-    msg += `*Duración total:* ${entreno.duracionTotalMin} min\n\n`;
+    msg += `*Tipo:* ${workout.tipo.toUpperCase()}\n`;
+    msg += `*Estructura:* ${workout.reps}x${workout.durMin} min\n`;
+    if (workout.recSec > 0) msg += `*Recuperación:* ${workout.recSec} seg\n`;
+    msg += `*Duración total:* ${workout.duracionTotalMin} min\n\n`;
     msg += '*📊 MÉTRICAS*\n';
-    msg += `• TSS estimado: ${entreno.tssEsperado}\n`;
-    msg += `• IF esperado: ${entreno.ifEsperado}\n`;
-    msg += `• KJ esperados: ${entreno.kjEsperados}\n\n`;
-    msg += '*💻 CÓDIGO ZWO (copia y pega en Zwift/TR)*\n';
-    msg += '```\n';
-    const wu = entreno.wWU;
-    const wLow = entreno.wLow;
-    const wHigh = entreno.wHigh;
-    const wRec = entreno.wRec;
-    const wCD = entreno.wCD;
-    msg += `WU: ${wu - 10} - ${wu + 10}W (10min)\n`;
-    for (let i = 1; i <= reps; i++) {
-      msg += `Rep ${i}: ${wLow - 5} - ${wHigh + 5}W (${dur}min)\n`;
-      if (i < reps && rec > 0) {
-        msg += `Rec: ${wRec - 10} - ${wRec + 10}W (${(rec / 60).toFixed(1)}min)\n`;
-      }
-    }
-    msg += `CD: ${wCD - 10} - ${wCD + 10}W (10min)\n`;
+    msg += `• TSS estimado: ${workout.tssEsperado}\n`;
+    msg += `• IF esperado: ${workout.ifEsperado}\n`;
+    msg += `• KJ esperados: ${workout.kjEsperados}\n\n`;
+    msg += '*💻 CÓDIGO ZWO*\n```\n';
+
+    // ─── BLOQUES ───
+    workout.bloques.forEach(bloque => {
+      const wLow = Math.round(bloque.vatios.low);
+      const wHigh = Math.round(bloque.vatios.high);
+      const emoji = bloque.tipo === 'warmup' ? '🔥' : 
+                     bloque.tipo === 'main' ? '⚡' : 
+                     bloque.tipo === 'recovery' ? '💨' : '❄️';
+      msg += `${emoji} ${bloque.nombre}: ${wLow}-${wHigh}W (${bloque.duracionMin}min)\n`;
+    });
+
     msg += '```\n';
     msg += '\n⚠️ *Ajusta los vatios según tu percepción.*';
 
@@ -1976,74 +2119,48 @@ async function cmdZwo(args) {
   }
 }
 
-// ─── COMANDO GARMIN ───
+// ─── COMANDO GARMIN (REFACTORIZADO - USA WORKOUT) ───
 async function cmdGarmin(args) {
-  if (!args || !Array.isArray(args)) { args = []; }
-
-  const props = {
-    plan_tipo: getProperty('plan_tipo'),
-    plan_reps: getProperty('plan_reps'),
-    plan_durMin: getProperty('plan_durMin'),
-    plan_recSec: getProperty('plan_recSec')
-  };
-
-  const tipo = args[0] ? args[0].toLowerCase().trim() : props.plan_tipo;
-  let reps = args[1] ? parseInt(args[1], 10) : parseInt(props.plan_reps);
-  let durMin = args[2] ? parseInt(args[2], 10) : parseInt(props.plan_durMin);
-  let recSec = args[3] ? parseInt(args[3], 10) : parseInt(props.plan_recSec);
-
-  if (isNaN(reps)) reps = 1;
-  if (isNaN(durMin)) durMin = 45;
-  if (isNaN(recSec)) recSec = 0;
-
-  let entreno;
-  if (!tipo) {
-    entreno = generarEntrenamiento(null, null, null, null);
-  } else {
-    const validos = ['sweetspot', 'vo2', 'ftp', 'z2'];
-    if (validos.indexOf(tipo.toLowerCase()) === -1) {
-      await sendTelegram('Tipo inválido. Usa: sweetspot | vo2 | ftp | z2');
+  try {
+    const state = await getAthleteState();
+    if (!state || !state.workout) {
+      await sendTelegram('⚠️ No hay plan de entreno activo o es día de descanso.');
       return;
     }
-    entreno = generarEntrenamiento(tipo, reps, durMin, recSec);
-  }
 
-  try {
-    const hoy = formatDate(new Date());
-    const ftp = CONFIG.FTP;
+    const workout = state.workout;
 
-    const wuLowW = Math.round(ftp * 0.40);
-    const wuHighW = Math.round(ftp * 0.55);
-    let textoIntervals = `- Warmup ${Math.round(entreno.wuDur / 60)}m ${wuLowW}-${wuHighW}w\n\n`;
-
-    const mainW = Math.round(entreno.wLow);
-    const mainLow = Math.round(mainW * 0.95);
-    const mainHigh = Math.round(mainW * 1.05);
-
-    for (let i = 0; i < entreno.reps; i++) {
-      textoIntervals += `- ${entreno.durMin}m ${mainLow}-${mainHigh}w\n`;
-      if (entreno.recSec > 0 && i < entreno.reps - 1) {
-        const recW = Math.round(ftp * 0.45);
-        textoIntervals += `- ${Math.round(entreno.recSec / 60)}m ${recW}w\n`;
-      }
+    if (workout.tipo === 'descanso') {
+      await sendTelegram('🧘 Es día de descanso. No hay entrenamiento para subir.');
+      return;
     }
 
-    const cdLowW = Math.round(ftp * 0.40);
-    const cdHighW = Math.round(ftp * 0.50);
-    textoIntervals += `\n- Cooldown 10m ${cdLowW}-${cdHighW}w`;
+    const hoy = formatDate(new Date());
 
+    // ─── CONSTRUIR DESCRIPCIÓN PARA INTERVALS (SIN RECALCULAR) ───
+    let textoIntervals = '';
+    workout.bloques.forEach(bloque => {
+      const wLow = Math.round(bloque.vatios.low);
+      const wHigh = Math.round(bloque.vatios.high);
+      const emoji = bloque.tipo === 'warmup' ? '🔥' : 
+                     bloque.tipo === 'main' ? '⚡' : 
+                     bloque.tipo === 'recovery' ? '💨' : '❄️';
+      textoIntervals += `- ${emoji} ${bloque.nombre}: ${wLow}-${wHigh}W (${bloque.duracionMin}min)\n`;
+    });
+
+    // ─── ENVIAR A INTERVALS.ICU ───
     const payloadIntervals = {
       category: 'WORKOUT',
       type: 'Ride',
-      name: entreno.titulo,
+      name: `AI-${workout.tipo.toUpperCase()} ${workout.reps}x${workout.durMin}m`,
       start_date_local: hoy + 'T08:00:00',
-      description: textoIntervals
+      description: `Entreno generado por WorldTourCoach v9.1\n${textoIntervals}\nIF: ${workout.ifEsperado} | TSS: ${workout.tssEsperado}`
     };
 
     await postIntervals('/events', payloadIntervals);
     console.log('[cmdGarmin] Enviado con éxito a Intervals.');
 
-    const msg = `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${entreno.titulo}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${entreno.ifEsperado} | TSS ${entreno.tssEsperado}\n\n_Subido correctamente con intensidades corregidas._`;
+    const msg = `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${payloadIntervals.name}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${workout.ifEsperado} | TSS ${workout.tssEsperado}\n\n_Subido correctamente con el mismo entrenamiento que /hoy._`;
     await sendTelegram(msg);
 
   } catch (err) {
@@ -2092,6 +2209,9 @@ async function cmdPlan() {
     const state = await getAthleteState();
     if (!state) { await sendTelegram('Sin datos.'); return; }
 
+    // Usar el workout (SINGLE SOURCE OF TRUTH)
+    const workout = state.workout;
+
     let msg = '*🧠 PLAN DEL DÍA (v9.1)*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += '*📊 ESTADO*\n';
@@ -2100,45 +2220,59 @@ async function cmdPlan() {
     msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
     if (state.haceCalor) msg += `• 🌡️ ${state.tempActual}°C (factor de ajuste aplicado)\n`;
     msg += '\n';
-
+    
     if (state.restricciones.motivo && state.restricciones.motivo.length > 0) {
       msg += '*🔒 RESTRICCIONES*\n';
       state.restricciones.motivo.forEach((m) => { msg += `• ${m}\n`; });
       msg += '\n';
     }
-
-    if (state.decision.tipo === 'descanso') {
+    
+    if (workout.tipo === 'descanso') {
       msg += '*🧘 DESCANSO TOTAL*\n';
-      msg += `Motivo: ${state.decision.motivo}\n\n`;
+      msg += `Motivo: ${workout.motivo}\n\n`;
       msg += '💡 *Recomendación:* Movilidad 15\' y foam rolling.';
     } else {
       msg += '*🚴 ENTRENO*\n';
-      msg += `• Tipo: *${state.decision.tipo.toUpperCase()}*\n`;
-      if (state.decision.reps > 0) {
-        msg += `• Estructura: *${state.decision.reps}x${state.decision.durMin} min*\n`;
-        if (state.decision.recSec > 0) msg += `• Recuperación: *${state.decision.recSec} seg*\n`;
+      msg += `• Tipo: *${workout.tipo.toUpperCase()}*\n`;
+      if (workout.reps > 0) {
+        msg += `• Estructura: *${workout.reps}x${workout.durMin} min*\n`;
+        if (workout.recSec > 0) msg += `• Recuperación: *${workout.recSec} seg*\n`;
       } else {
-        msg += `• Duración: *${state.decision.durMin} min*\n`;
+        msg += `• Duración: *${workout.durMin} min*\n`;
       }
-      msg += `• Vatios: *${state.entreno.wLow}-${state.entreno.wHigh}W*\n`;
-      msg += `• Prioridad: *${(state.decision.prioridad || 'base').replace('_', ' ').toUpperCase()}*\n`;
-      if (state.decision.notaHidratacion) msg += `• ${state.decision.notaHidratacion}\n`;
+      msg += `• Vatios: *${workout.vatios.low}-${workout.vatios.high}W*\n`;
+      msg += `• Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP\n`;
+      msg += `• Prioridad: *${(workout.prioridad || 'base').replace('_', ' ').toUpperCase()}*\n`;
+      if (workout.notaHidratacion) msg += `• ${workout.notaHidratacion}\n`;
       msg += '\n';
-      if (state.entreno && state.entreno.tssEsperado) {
+      
+      // ─── MOSTRAR BLOQUES ───
+      if (workout.bloques && workout.bloques.length > 0) {
+        msg += '*📋 ESTRUCTURA DETALLADA*\n';
+        workout.bloques.forEach(bloque => {
+          const emoji = bloque.tipo === 'warmup' ? '🔥' : 
+                         bloque.tipo === 'main' ? '⚡' : 
+                         bloque.tipo === 'recovery' ? '💨' : '❄️';
+          msg += `• ${emoji} ${bloque.nombre}: ${bloque.vatios.low}-${bloque.vatios.high}W (${bloque.duracionMin}min)\n`;
+        });
+      }
+      
+      msg += '\n';
+      if (workout.tssEsperado) {
         msg += '*📈 MÉTRICAS*\n';
-        msg += `• TSS: *${state.entreno.tssEsperado}*\n`;
-        msg += `• IF: *${state.entreno.ifEsperado}*\n`;
-        msg += `• KJ: *${state.entreno.kjEsperados} kJ*\n`;
-        msg += `• CH: *${state.entreno.carbsEsperados}g*\n\n`;
+        msg += `• TSS: *${workout.tssEsperado}*\n`;
+        msg += `• IF: *${workout.ifEsperado}*\n`;
+        msg += `• KJ: *${workout.kjEsperados} kJ*\n`;
+        msg += `• CH: *${workout.carbsEsperados}g*\n\n`;
       }
     }
-
-    if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') {
+    
+    if (state.aprendizaje && state.aprendizaje.probabilidad && workout.tipo !== 'descanso') {
       const p = state.aprendizaje.probabilidad;
       msg += `*📊 PROBABILIDAD DE ÉXITO*\n`;
       msg += `• ${p.nivel} (${p.probabilidad}%)\n\n`;
     }
-
+    
     if (state.traza && state.traza.reglasActivadas && state.traza.reglasActivadas.length > 0) {
       msg += '*🧠 DECISIÓN EXPLICADA*\n';
       state.traza.reglasActivadas.slice(0, 3).forEach((r) => {
@@ -2146,9 +2280,9 @@ async function cmdPlan() {
       });
       msg += '\n';
     }
-
+    
     msg += '📱 *Comandos:* /zwo | /garmin | /clima | /nutricion | /traza';
-
+    
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdPlan] ERROR:', err.toString());
@@ -2223,11 +2357,16 @@ async function cmdNutricion() {
     const state = await getAthleteState();
     if (!state) { await sendTelegram('Sin datos.'); return; }
     const n = state.nutricion;
+    const workout = state.workout;
 
     let msg = '*🥗 NUTRICIÓN + RECETAS*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-
-    if (state.decision.tipo !== 'descanso') {
+    
+    if (workout && workout.tipo !== 'descanso') {
+      msg += '*📊 MÉTRICAS DE DESGASTE*\n';
+      msg += `• Entreno: ${workout.tipo.toUpperCase()}\n`;
+      msg += `• KJ: *${workout.kjEsperados} kJ* | CH oxidados: *${workout.carbsEsperados}g*\n\n`;
+    } else if (state.decision.tipo !== 'descanso') {
       msg += '*📊 MÉTRICAS DE DESGASTE*\n';
       msg += `• Entreno: ${state.decision.tipo.toUpperCase()}\n`;
       msg += `• KJ: *${state.entreno.kjEsperados} kJ* | CH oxidados: *${state.entreno.carbsEsperados}g*\n\n`;
@@ -2250,7 +2389,7 @@ async function cmdNutricion() {
     msg += `• 🍗 Proteína: *${n.protTotalDia}g*\n`;
     msg += `• 🥑 Grasas: *${n.grasaDiaria}g*\n\n`;
 
-    if (state.decision.tipo !== 'descanso') {
+    if (workout && workout.tipo !== 'descanso') {
       msg += '*⏳ TIMING POST-ENTRENO*\n';
       msg += `🥤 *Inmediatamente después (15-30 min):*\n`;
       msg += `   → ${n.chInmediato}g CH + 30g Proteína\n`;
@@ -2264,7 +2403,7 @@ async function cmdNutricion() {
     msg += '🍳 *RECETAS RÁPIDAS*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
-    if (state.decision.tipo !== 'descanso') {
+    if (workout && workout.tipo !== 'descanso') {
       msg += '*🥤 RECUPERACIÓN INMEDIATA*\n';
       msg += 'Batido recuperador:\n';
       msg += '• 300ml leche o bebida vegetal\n';
@@ -2300,7 +2439,7 @@ async function cmdNutricion() {
     } else if (n.haceCalor && n.temp > 30) {
       msg += '• 🟡 Prefiere comidas con alto contenido en agua\n';
       msg += '• Hidratación constante, no esperes a tener sed\n';
-    } else if (state.decision.tipo === 'descanso') {
+    } else if (workout && workout.tipo === 'descanso') {
       msg += '• Aprovecha el día de descanso para comer más vegetales\n';
     } else {
       msg += '• Come cada 3-4 horas para mantener energía\n';
@@ -2348,6 +2487,7 @@ async function cmdObjetivo() {
     const ftpHistorico = CONFIG.FTP_HISTORICO || { valor: 296, peso: 60 };
     const diffFTP = ftpHistorico.valor - CONFIG.FTP;
     const pesoDiff = CONFIG.WEIGHT_KG - ftpHistorico.peso;
+    const workout = state.workout;
 
     let msg = `🎯 *PLAN PARA RECUPERAR LOS ${ftpHistorico.valor}W*\n`;
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -2391,6 +2531,15 @@ async function cmdObjetivo() {
       msg += '• Usa /plan para ver el entreno de hoy\n';
       msg += '• Usa /semana para ver el progreso semanal\n';
       msg += '• La consistencia es la clave\n';
+
+      // ─── MOSTRAR CÓMO EL WORKOUT AYUDA AL OBJETIVO ───
+      if (workout && workout.tipo !== 'descanso') {
+        msg += '\n*📊 CÓMO AYUDA EL ENTRENO DE HOY*\n';
+        msg += `• Tipo: ${workout.tipo.toUpperCase()} (Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP)\n`;
+        msg += `• TSS de hoy: ${workout.tssEsperado} → contribuye a la carga crónica (CTL)\n`;
+        msg += `• IF: ${workout.ifEsperado} → calidad del estímulo\n`;
+        msg += `• Objetivo a ${ftpHistorico.valor}W: ${diffFTP > 0 ? '📈 Te acercas cada día' : '🎯 ¡Objetivo alcanzado!'}\n`;
+      }
     } else {
       msg += '🎉 *¡Estás en tu mejor momento!*\n';
       msg += '• Mantén la forma y busca nuevos retos\n';
@@ -2410,7 +2559,7 @@ async function cmdAjuste() { await sendTelegram('🌡️ *FACTOR CLIMA APLICADO*
 async function cmdSemana() { await sendTelegram('📊 *RESUMEN SEMANAL*\n━━━━━━━━━━━━━━━━━━━━━━\n\nUsa /semanapasada para ver la semana anterior.'); }
 async function cmdSemanaPasada() { await sendTelegram('📊 *RESUMEN SEMANA PASADA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nFuncionalidad en desarrollo.'); }
 async function cmdConsejo() { const state = await getAthleteState(); if (!state) { await sendTelegram('Sin datos.'); return; } let msg = '🧠 *CONSEJO DEL DÍA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; state.consejo.forEach((c) => { msg += `${c}\n\n`; }); msg += '📱 *Comandos:* /hoy | /plan | /estado'; await sendTelegramLong(msg); }
-async function cmdResumen() { const state = await getAthleteState(); if (!state) { await sendTelegram('Sin datos.'); return; } let msg = '📋 *RESUMEN EJECUTIVO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; const emoji = state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴'; msg += `*📊 ESTADO:* ${emoji} TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`; msg += `*😴 SUEÑO:* ${state.estado.sleepQuality === 1 ? 'Malo' : state.estado.sleepQuality === 2 ? 'Regular' : 'Bueno'}\n`; msg += `*🌡️ CLIMA:* ${state.tempActual}°C${state.haceCalor ? ' 🔥' : ''}\n`; if (state.decision.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n'; else { msg += '*🚴 PLAN:* ' + state.decision.tipo.toUpperCase(); if (state.decision.reps > 0) msg += ` ${state.decision.reps}x${state.decision.durMin}min`; else msg += ` ${state.decision.durMin}min`; msg += '\n'; } if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') { const p = state.aprendizaje.probabilidad; msg += `\n📊 *Probabilidad de éxito:* ${p.nivel} (${p.probabilidad}%)\n`; } msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /clima'; await sendTelegramLong(msg); }
+async function cmdResumen() { const state = await getAthleteState(); if (!state) { await sendTelegram('Sin datos.'); return; } let msg = '📋 *RESUMEN EJECUTIVO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; const emoji = state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴'; msg += `*📊 ESTADO:* ${emoji} TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`; msg += `*😴 SUEÑO:* ${state.estado.sleepQuality === 1 ? 'Malo' : state.estado.sleepQuality === 2 ? 'Regular' : 'Bueno'}\n`; msg += `*🌡️ CLIMA:* ${state.tempActual}°C${state.haceCalor ? ' 🔥' : ''}\n`; if (state.workout && state.workout.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n'; else if (state.decision.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n'; else { const w = state.workout || state.entreno; msg += '*🚴 PLAN:* ' + (w.tipo || w.tipo || '').toUpperCase(); if (w.reps > 0) msg += ` ${w.reps}x${w.durMin}min`; else if (w.durMin) msg += ` ${w.durMin}min`; msg += '\n'; } if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') { const p = state.aprendizaje.probabilidad; msg += `\n📊 *Probabilidad de éxito:* ${p.nivel} (${p.probabilidad}%)\n`; } msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /clima'; await sendTelegramLong(msg); }
 async function cmdFatiga() { const state = await getAthleteState(); if (!state) { await sendTelegram('Sin datos.'); return; } let msg = '🔬 *ANÁLISIS DE FATIGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; msg += '*📊 MÉTRICAS ACTUALES*\n'; msg += `• TSB: *${state.tsb.toFixed(1)}* `; if (state.tsb > 0) msg += '🟢 (Fresco)'; else if (state.tsb > -10) msg += '🟡 (Equilibrado)'; else if (state.tsb > -20) msg += '🟠 (Fatigado)'; else msg += '🔴 (Fatiga extrema)'; msg += '\n'; msg += `• Readiness: *${state.readiness}/100* `; if (state.readiness > 70) msg += '🟢 (Alta)'; else if (state.readiness > 50) msg += '🟡 (Media)'; else msg += '🔴 (Baja)'; msg += '\n'; msg += `• HRV: *${state.estado.hrv || 'N/D'}*\n`; msg += `• ACWR: *${state.estado.acwr.toFixed(2)}* ${state.estado.acwr > 1.3 ? '⚠️ ALTO' : '✅ OK'}\n`; msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`; msg += `• Pasos: ${state.estado.pasos.toLocaleString()}\n\n`; msg += '*💡 RECOMENDACIÓN*\n'; if (state.tsb < -20 || state.readiness < 40) { msg += '🔴 *DESCANSO TOTAL OBLIGATORIO*\n• Haz solo movilidad suave\n• Prioriza dormir 8+ horas\n'; } else if (state.tsb < -10 || state.readiness < 55) { msg += '🟡 *RECUPERACIÓN ACTIVA*\n• Z1-Z2 suave (30-45 min)\n• Evita intensidad\n'; } else if (state.tsb < 0 || state.readiness < 70) { msg += '🟢 *ENTRENO CONTROLADO*\n• Z2 o SweetSpot ligero\n• Controla la intensidad\n'; } else { msg += '🟢 *VENTANA DE CALIDAD*\n• Puedes entrenar con intensidad\n• Aprovecha el buen estado\n'; } msg += '\n📱 *Comandos:* /plan | /hoy | /consejo'; await sendTelegramLong(msg); }
 async function cmdAprender() { const state = await getAthleteState(); if (!state) { await sendTelegram('Sin datos.'); return; } const stats = state.aprendizaje.stats; let msg = '🧠 *WORLD TOUR COACH - APRENDIZAJES*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; if (!stats.suficiente) { msg += '📊 *No tengo suficientes datos aún.*\n\n'; msg += '💡 Sigue entrenando y dando feedback con /analizar.\n'; msg += `   Necesito mínimo 5 entrenos para empezar a aprender.\n   (Tienes ${stats.total} registrados)\n`; await sendTelegramLong(msg); return; } msg += `📊 *Entrenamientos analizados:* ${stats.total}\n\n`; msg += '*📈 TASA DE ÉXITO POR TIPO DE ENTRENO*\n'; const tipos = Object.keys(stats.porTipo || {}); tipos.sort((a, b) => (stats.porTipo[b].tasa || 0) - (stats.porTipo[a].tasa || 0)); tipos.forEach((tipo) => { const d = stats.porTipo[tipo]; const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴'; msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} entrenos)\n`; }); if (tipos.length > 0) { const mejor = tipos[0]; const dMejor = stats.porTipo[mejor]; msg += `\n*🏆 MEJOR ENTRENO PARA TI*\n• ${mejor.toUpperCase()} con ${dMejor.tasa}% éxito\n`; } msg += '\n📱 *Comandos:* /hoy | /plan | /aprender-validar'; await sendTelegramLong(msg); }
 async function cmdAprenderValidar() { const historial = obtenerHistorial(); const stats = getEstadisticasAgregadas(); let msg = '🧠 *VALIDACIÓN DEL APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'; msg += `*📊 MUESTRA DISPONIBLE*\n• Entrenos con feedback: *${historial.length}*\n• Mínimo recomendado: *20*\n`; if (historial.length >= 20) msg += '• ✅ Muestra suficiente para aprendizaje fiable\n'; else if (historial.length >= 10) msg += `• 🟡 Muestra parcial (${historial.length}/20) - Mejorable\n`; else msg += `• 🔴 Muestra insuficiente - Necesitas más datos\n`; msg += '\n*📈 PATRONES CONSISTENTES*\n'; const tipos = Object.keys(stats.porTipo || {}); let consistentes = 0, total = 0; tipos.forEach((tipo) => { const d = stats.porTipo[tipo]; if (d.total >= 3) { total++; if (d.tasa >= 60) consistentes++; const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴'; msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} ent, ${d.tasa}% tasa)\n`; } }); if (total === 0) msg += '• ⚠️ Aún no hay patrones claros. Sigue entrenando.\n'; msg += '\n*🎯 RECOMENDACIONES CONFIABLES*\n'; const recomendaciones = []; tipos.forEach((tipo) => { const d = stats.porTipo[tipo]; if (d.total >= 5 && d.tasa >= 70) { recomendaciones.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`); } }); if (recomendaciones.length > 0) { msg += `• ✅ ${recomendaciones.join(' | ')}\n   → Estos entrenos funcionan consistentemente bien contigo.\n`; } else { msg += `• ⚠️ Aún no hay recomendaciones con alta confianza.\n   → Necesitas más datos (${historial.length}/20).\n`; } msg += '\n*⚠️ QUÉ NO FUNCIONA (para evitar)*\n'; const evitar = []; tipos.forEach((tipo) => { const d = stats.porTipo[tipo]; if (d.total >= 3 && d.tasa < 50) { evitar.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`); } }); if (evitar.length > 0) { msg += `• 🔴 ${evitar.join(' | ')}\n   → El sistema evitará recomendarte estos tipos.\n`; } else { msg += '• ✅ No hay patrones negativos claros.\n'; } msg += '\n*💡 CONSEJO DEL SISTEMA*\n'; if (historial.length < 5) { msg += '📊 Sigue entrenando y dando feedback con /analizar.\n   Necesito al menos 20 entrenos para aprender de verdad.\n'; } else if (historial.length < 10) { msg += '📊 Buen comienzo. Necesito más datos para ser preciso.\n   Sigue con la consistencia y el feedback.\n'; } else if (historial.length < 20) { msg += '📊 Estamos cerca. Sigue así, el sistema cada vez te conoce mejor.\n'; } else { msg += '📊 ✅ El sistema te conoce. Las recomendaciones ya son fiables.\n   Sigue confiando en el feedback, ahora el sistema aprende contigo.\n'; } await sendTelegramLong(msg); }
@@ -2438,21 +2587,23 @@ async function cmdDebug() {
   msg += '\n*📈 SEMANA*\n';
   msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
   msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
-  msg += '\n*🚴 PLAN*\n';
-  if (state.decision.tipo === 'descanso') {
-    msg += '• Plan: DESCANSO\n';
+  msg += '\n*🚴 WORKOUT*\n';
+  if (state.workout) {
+    const w = state.workout;
+    msg += `• Tipo: ${w.tipo.toUpperCase()}\n`;
+    msg += `• Estructura: ${w.reps}x${w.durMin}min\n`;
+    msg += `• IF: ${w.ifEsperado} | TSS: ${w.tssEsperado}\n`;
+    msg += `• Vatios: ${w.vatios.low}-${w.vatios.high}W\n`;
+    msg += `• Bloques: ${w.bloques.length}\n`;
   } else {
-    msg += `• Tipo: ${state.decision.tipo.toUpperCase()}\n`;
-    msg += `• Reps: ${state.decision.reps}\n`;
-    msg += `• Dur: ${state.decision.durMin}min\n`;
-    msg += `• Intensidad: ${(state.decision.intensidad * 100).toFixed(0)}%\n`;
+    msg += '• Workout: NO GENERADO\n';
   }
   msg += '\n*🔧 CONFIG*\n';
   msg += `• FTP: ${CONFIG.FTP}W\n`;
   msg += `• Peso: ${CONFIG.WEIGHT_KG}kg\n`;
   msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
   msg += `• Objetivo: ${CONFIG.FTP_HISTORICO.valor}W\n`;
-  msg += '\n📱 *Versión: v9.1*';
+  msg += '\n📱 *Versión: v9.1 (Single Source of Truth)*';
   await sendTelegramLong(msg);
 }
 
@@ -2789,6 +2940,7 @@ app.get('/api/estado', async (req, res) => {
       estado: state.estado,
       decision: state.decision,
       entreno: state.entreno,
+      workout: state.workout,
       nutricion: state.nutricion,
       fuerza: state.fuerza,
       consejo: state.consejo,
@@ -2815,7 +2967,12 @@ app.post('/api/comando', async (req, res) => {
         if (!state) {
           respuesta = '❌ Sin datos disponibles';
         } else {
-          respuesta = `🌅 WORLD TOUR COACH - HOY\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO\n• Readiness: ${state.readiness}/100\n• TSB: ${state.tsb.toFixed(1)}\n• CTL: ${state.estado.ctl.toFixed(1)} | ATL: ${state.estado.atl.toFixed(1)}\n\n🚴 PLAN\n• ${state.decision.tipo.toUpperCase()} ${state.decision.durMin}min\n• Vatios: ${state.entreno.wLow}-${state.entreno.wHigh}W`;
+          const w = state.workout;
+          if (w && w.tipo !== 'descanso') {
+            respuesta = `🌅 WORLD TOUR COACH - HOY\n━━━━━━━━━━━━━━━━━━━━━━\n\n📊 ESTADO\n• Readiness: ${state.readiness}/100\n• TSB: ${state.tsb.toFixed(1)}\n• CTL: ${state.estado.ctl.toFixed(1)} | ATL: ${state.estado.atl.toFixed(1)}\n\n🚴 PLAN\n• ${w.tipo.toUpperCase()} ${w.reps}x${w.durMin}min\n• Vatios: ${w.vatios.low}-${w.vatios.high}W\n• IF: ${w.ifEsperado} | TSS: ${w.tssEsperado}`;
+          } else {
+            respuesta = '🧘 Hoy es día de descanso.';
+          }
         }
         break;
       case '/plan':
@@ -2823,7 +2980,12 @@ app.post('/api/comando', async (req, res) => {
         if (!statePlan) {
           respuesta = '❌ Sin datos disponibles';
         } else {
-          respuesta = `🧠 PLAN DEL DÍA\n━━━━━━━━━━━━━━━━━━━━━━\n\nTipo: ${statePlan.decision.tipo.toUpperCase()}\nDuración: ${statePlan.decision.durMin}min\nIntensidad: ${(statePlan.decision.intensidad * 100).toFixed(0)}% FTP\nVatios: ${statePlan.entreno.wLow}-${statePlan.entreno.wHigh}W`;
+          const w = statePlan.workout;
+          if (w && w.tipo !== 'descanso') {
+            respuesta = `🧠 PLAN DEL DÍA\n━━━━━━━━━━━━━━━━━━━━━━\n\nTipo: ${w.tipo.toUpperCase()}\nEstructura: ${w.reps}x${w.durMin}min\nIntensidad: ${(w.intensidadFTP * 100).toFixed(0)}% FTP\nVatios: ${w.vatios.low}-${w.vatios.high}W\nIF: ${w.ifEsperado} | TSS: ${w.tssEsperado}\n\n📋 BLOQUES:\n${w.bloques.map(b => `• ${b.nombre}: ${b.vatios.low}-${b.vatios.high}W (${b.duracionMin}min)`).join('\n')}`;
+          } else {
+            respuesta = '🧘 Hoy es día de descanso.';
+          }
         }
         break;
       default:
@@ -2936,9 +3098,15 @@ app.listen(PORT, () => {
   console.log(`🎯 Objetivo: ${CONFIG.FTP_HISTORICO.valor}W`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('📍 Endpoints disponibles:');
-  console.log('  GET  /        - Información del servidor');
-  console.log('  GET  /health  - Estado de salud');
-  console.log('  GET  /ping    - Mantener activo');
-  console.log('  POST /webhook - Webhook Telegram');
+  console.log('  GET  /              - Información del servidor');
+  console.log('  GET  /health        - Estado de salud');
+  console.log('  GET  /ping          - Mantener activo');
+  console.log('  POST /webhook       - Webhook Telegram');
+  console.log('  GET  /api/estado    - Estado del atleta');
+  console.log('  POST /api/comando   - Ejecutar comandos');
+  console.log('  GET  /api/config    - Configuración del sistema');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🧠 SINGLE SOURCE OF TRUTH: generateWorkout()');
+  console.log('📋 Todos los comandos usan el mismo Workout');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
