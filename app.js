@@ -2119,7 +2119,7 @@ async function cmdZwo(args) {
   }
 }
 
-// ─── COMANDO GARMIN (REFACTORIZADO - USA WORKOUT) ───
+// ─── COMANDO GARMIN (CORREGIDO - SUBE WORKOUT ESTRUCTURADO) ───
 async function cmdGarmin(args) {
   try {
     const state = await getAthleteState();
@@ -2136,8 +2136,9 @@ async function cmdGarmin(args) {
     }
 
     const hoy = formatDate(new Date());
+    const ftp = CONFIG.FTP || 240;
 
-    // ─── CONSTRUIR DESCRIPCIÓN PARA INTERVALS (SIN RECALCULAR) ───
+    // ─── CONSTRUIR DESCRIPCIÓN PARA INTERVALS ───
     let textoIntervals = '';
     workout.bloques.forEach(bloque => {
       const wLow = Math.round(bloque.vatios.low);
@@ -2148,27 +2149,121 @@ async function cmdGarmin(args) {
       textoIntervals += `- ${emoji} ${bloque.nombre}: ${wLow}-${wHigh}W (${bloque.duracionMin}min)\n`;
     });
 
-    // ─── ENVIAR A INTERVALS.ICU ───
+    // ─── CONSTRUIR BLOQUES ESTRUCTURADOS PARA INTERVALS.ICU ───
+    const bloquesWorkout = [];
+    
+    // 1. Calentamiento
+    const warmupBloque = workout.bloques.find(b => b.tipo === 'warmup');
+    if (warmupBloque) {
+      bloquesWorkout.push({
+        type: 'Warmup',
+        duration: warmupBloque.duracionMin * 60,
+        power: { low: Math.round(warmupBloque.vatios.low), high: Math.round(warmupBloque.vatios.high) }
+      });
+    }
+
+    // 2. Bloques principales
+    const mainBloques = workout.bloques.filter(b => b.tipo === 'main');
+    mainBloques.forEach((bloque, index) => {
+      bloquesWorkout.push({
+        type: 'SteadyState',
+        duration: bloque.duracionMin * 60,
+        power: { low: Math.round(bloque.vatios.low), high: Math.round(bloque.vatios.high) },
+        name: `Repetición ${index + 1}`
+      });
+      
+      // Recuperación entre bloques (si existe)
+      const recoveryBloque = workout.bloques.find(b => b.tipo === 'recovery');
+      if (recoveryBloque && index < mainBloques.length - 1) {
+        bloquesWorkout.push({
+          type: 'Recovery',
+          duration: recoveryBloque.duracionMin * 60,
+          power: { low: Math.round(recoveryBloque.vatios.low), high: Math.round(recoveryBloque.vatios.high) }
+        });
+      }
+    });
+
+    // 3. Vuelta a la calma
+    const cooldownBloque = workout.bloques.find(b => b.tipo === 'cooldown');
+    if (cooldownBloque) {
+      bloquesWorkout.push({
+        type: 'Cooldown',
+        duration: cooldownBloque.duracionMin * 60,
+        power: { low: Math.round(cooldownBloque.vatios.low), high: Math.round(cooldownBloque.vatios.high) }
+      });
+    }
+
+    // ─── ENVIAR WORKOUT ESTRUCTURADO A INTERVALS.ICU ───
     const payloadIntervals = {
       category: 'WORKOUT',
       type: 'Ride',
       name: `AI-${workout.tipo.toUpperCase()} ${workout.reps}x${workout.durMin}m`,
       start_date_local: hoy + 'T08:00:00',
-      description: `Entreno generado por WorldTourCoach v9.1\n${textoIntervals}\nIF: ${workout.ifEsperado} | TSS: ${workout.tssEsperado}`
+      description: `Entreno generado por WorldTourCoach v9.1\n${textoIntervals}\nIF: ${workout.ifEsperado} | TSS: ${workout.tssEsperado}`,
+      workout: {
+        blocks: bloquesWorkout,
+        ftp: ftp
+      }
     };
 
     await postIntervals('/events', payloadIntervals);
-    console.log('[cmdGarmin] Enviado con éxito a Intervals.');
+    console.log('[cmdGarmin] Workout estructurado enviado a Intervals.');
 
-    const msg = `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${payloadIntervals.name}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${workout.ifEsperado} | TSS ${workout.tssEsperado}\n\n_Subido correctamente con el mismo entrenamiento que /hoy._`;
+    // ─── GENERAR ARCHIVO ZWO PARA GARMIN ───
+    let zwoContent = `<?xml version="1.0" encoding="UTF-8"?>
+<workout_file>
+  <author>WorldTourCoach</author>
+  <name>${payloadIntervals.name}</name>
+  <description>IF ${workout.ifEsperado} | TSS ${workout.tssEsperado}</description>
+  <sportType>bike</sportType>
+  <workout>
+`;
+
+    workout.bloques.forEach(bloque => {
+      const wLow = Math.round(bloque.vatios.low / ftp * 100) / 100;
+      const wHigh = Math.round(bloque.vatios.high / ftp * 100) / 100;
+      const wAvg = Math.round(((bloque.vatios.low + bloque.vatios.high) / 2) / ftp * 100) / 100;
+      
+      if (bloque.tipo === 'warmup') {
+        zwoContent += `    <Warmup Duration="${bloque.duracionMin * 60}" PowerLow="${wLow.toFixed(2)}" PowerHigh="${wHigh.toFixed(2)}"/>\n`;
+      } else if (bloque.tipo === 'main') {
+        zwoContent += `    <SteadyState Duration="${bloque.duracionMin * 60}" Power="${wAvg.toFixed(2)}"/>\n`;
+      } else if (bloque.tipo === 'recovery') {
+        zwoContent += `    <Recovery Duration="${bloque.duracionMin * 60}" Power="${wAvg.toFixed(2)}"/>\n`;
+      } else if (bloque.tipo === 'cooldown') {
+        zwoContent += `    <Cooldown Duration="${bloque.duracionMin * 60}" PowerLow="${wLow.toFixed(2)}" PowerHigh="${wHigh.toFixed(2)}"/>\n`;
+      }
+    });
+
+    zwoContent += `  </workout>\n</workout_file>`;
+
+    // ─── ENVIAR ARCHIVO ZWO POR TELEGRAM ───
+    const urlTelegram = `https://api.telegram.org/bot${CONFIG.TELEGRAM_TOKEN}/sendDocument`;
+    
+    // Crear un buffer con el contenido del archivo ZWO
+    const formData = new FormData();
+    formData.append('chat_id', CONFIG.CHAT_ID);
+    formData.append('document', new Blob([zwoContent], { type: 'application/xml' }), `${payloadIntervals.name}.zwo`);
+    formData.append('caption', `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU Y GARMIN!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${payloadIntervals.name}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${workout.ifEsperado} | TSS ${workout.tssEsperado}\n• *Bloques:* ${workout.bloques.length}\n\n📎 *Archivo ZWO adjunto* para Garmin/Zwift.\n\n_Subido con el mismo entrenamiento que /hoy._`);
+
+    const response = await fetch(urlTelegram, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      console.log('[cmdGarmin] Error al enviar ZWO por Telegram:', await response.text());
+    }
+
+    // ─── MENSAJE DE CONFIRMACIÓN ───
+    const msg = `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${payloadIntervals.name}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${workout.ifEsperado} | TSS ${workout.tssEsperado}\n• *Bloques:* ${workout.bloques.length}\n\n📎 *Archivo ZWO enviado a Telegram* para Garmin/Zwift.\n\n_Subido con el mismo entrenamiento que /hoy._`;
     await sendTelegram(msg);
 
   } catch (err) {
     console.log('[cmdGarmin] Error:', err.toString());
-    await sendTelegram(`❌ Error: ${err.message}`);
+    await sendTelegram(`❌ Error al subir a Intervals: ${err.message}`);
   }
 }
-
 // ─── COMANDOS SIMPLIFICADOS ───
 async function cmdEstado() {
   try {
