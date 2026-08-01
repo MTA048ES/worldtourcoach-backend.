@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const motorIntencion = require('./motorIntencion');
-require('dotenv').config();
+require('dotenv').config({ path: 'ENV' });
 
 // ═══════════════════════════════════════════════════════════════
 // 🔧 POLYFILLS PARA NODE.JS (RAILWAY)
