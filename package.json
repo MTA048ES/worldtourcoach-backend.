@@ -1,0 +1,17 @@
+  {
+  "name": "world-tour-coach",
+  "version": "9.3.0",
+  "description": "World Tour Coach - Sistema definitivo con periodización",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "form-data": "^4.0.0"
+  }
+}
