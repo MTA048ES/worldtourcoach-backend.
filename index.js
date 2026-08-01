@@ -2082,26 +2082,77 @@ function calcularNutricionUnificada(estado, entreno) {
   try {
     const peso = CONFIG.WEIGHT_KG || 64;
     const edad = CONFIG.AGE_YEARS || 43;
+    const altura = CONFIG.HEIGHT_CM || 173;
     const pasos = estado.pasos || 0;
     const haceCalor = estado.haceCalor || false;
     const temp = estado.tempActual || 25;
     const heatIndex = estado.heatIndex || 25;
     const kj = entreno && entreno.kjEsperados ? entreno.kjEsperados : 0;
+    const ifValor = entreno && entreno.ifEsperado ? entreno.ifEsperado : 0;
+    const duracionMin = entreno && entreno.duracionTotalMin ? entreno.duracionTotalMin : 0;
+    const tipo = entreno && entreno.tipo ? entreno.tipo.toLowerCase() : 'descanso';
+    const tsb = estado.tsb || 0;
+    const fase = getFaseActual();
 
     // Mifflin-St Jeor para hombres: 10*peso + 6.25*altura - 5*edad + 5
-    let tmb = 10 * peso + 6.25 * CONFIG.HEIGHT_CM - 5 * edad + 5;
+    let tmb = 10 * peso + 6.25 * altura - 5 * edad + 5;
 
     const neat = pasos > 0 ? Math.round(pasos * 0.04) : 300;
     const kcalGastoTotal = Math.round(tmb + neat + kj);
 
-    let ratioBase = kj > 0 ? 6.0 : 4.0;
-    if (edad > 40) ratioBase += 0.5;
-    if (haceCalor && heatIndex > 30) ratioBase += 0.5;
+    // ─── PERIODIZACIÓN DE CARBOHIDRATOS SEGÚN FASE ───────────
+    let ratioBaseCH, ratioProteina, ratioGrasa;
 
-    const chTotalDia = Math.round(peso * ratioBase);
-    const protTotalDia = Math.round(peso * 1.8 + (edad > 40 ? 10 : 0));
-    const grasaDiaria = Math.round((kcalGastoTotal * 0.25) / 9);
+    switch (fase) {
+      case 'base':
+        // Base: más carbohidratos para volumen Z2
+        ratioBaseCH = 6.0; ratioProteina = 1.8; ratioGrasa = 0.25;
+        break;
+      case 'desarrollo':
+        // Desarrollo: equilibrio para calidad
+        ratioBaseCH = 5.5; ratioProteina = 2.0; ratioGrasa = 0.25;
+        break;
+      case 'especificidad':
+        // Especificidad: menos carbohidratos, más proteína
+        ratioBaseCH = 5.0; ratioProteina = 2.2; ratioGrasa = 0.30;
+        break;
+      case 'taper':
+        // Taper: reducción de carbohidratos
+        ratioBaseCH = 4.0; ratioProteina = 2.0; ratioGrasa = 0.30;
+        break;
+      default:
+        ratioBaseCH = 5.0; ratioProteina = 1.8; ratioGrasa = 0.25;
+    }
 
+    // Ajuste por edad Master 40+
+    if (edad > 40) { ratioProteina += 0.2; ratioBaseCH += 0.5; }
+
+    // Ajuste por calor
+    if (haceCalor && heatIndex > 35) ratioBaseCH += 0.5;
+    else if (haceCalor && heatIndex > 30) ratioBaseCH += 0.3;
+
+    const chTotalDia = Math.round(peso * ratioBaseCH);
+    const protTotalDia = Math.round(peso * ratioProteina);
+    const grasaDiaria = Math.round((kcalGastoTotal * ratioGrasa) / 9);
+
+    // ─── CH DURANTE ENTRENO (según tipo e IF) ──────────────
+    let chDuranteEntreno = 0;
+    let recomendacionDurante = '';
+
+    if (kj > 0 && tipo !== 'descanso') {
+      if (ifValor > 0.85) {
+        chDuranteEntreno = Math.round(duracionMin * 0.8);
+        recomendacionDurante = `⚡ Alta intensidad: ${chDuranteEntreno}g CH durante (${Math.round(chDuranteEntreno / (duracionMin / 60))}g/hora)`;
+      } else if (ifValor > 0.65) {
+        chDuranteEntreno = Math.round(duracionMin * 1.0);
+        recomendacionDurante = `🚴 Moderada intensidad: ${chDuranteEntreno}g CH durante (${Math.round(chDuranteEntreno / (duracionMin / 60))}g/hora)`;
+      } else {
+        chDuranteEntreno = Math.round(duracionMin * 0.5);
+        recomendacionDurante = `🌱 Z2 suave: ${chDuranteEntreno}g CH durante (${Math.round(chDuranteEntreno / (duracionMin / 60))}g/hora)`;
+      }
+    }
+
+    // ─── ESTRATEGIA "FUEL FOR THE WORK REQUIRED" ───────────
     let chInmediato = 0;
     if (kj > 0) {
       if (kj > 1200) chInmediato = 110;
@@ -2110,16 +2161,23 @@ function calcularNutricionUnificada(estado, entreno) {
       else chInmediato = 40;
     }
 
-    const chRestante = chTotalDia - chInmediato;
+    // Ajuste post-entreno según intensidad
+    let protPost = CONFIG.NUTRICION.proteinaPostMaster || 40;
+    if (ifValor > 0.85) protPost += 10;
+
+    const chRestante = chTotalDia - chInmediato - chDuranteEntreno;
     let chCena = kj > 0 ? Math.round(chRestante * 0.65) : Math.round(chRestante * 0.50);
     if (chCena < 40) chCena = 40;
 
-    let tasaSudor = 0.5;
-    if (haceCalor && heatIndex > 35) tasaSudor = 1.2;
-    else if (haceCalor && heatIndex > 32) tasaSudor = 1.0;
-    else if (haceCalor && heatIndex > 28) tasaSudor = 0.8;
-    
+    // ─── HIDRATACIÓN CON TASA DE SUDOR APRENDIDA ────────────
+    let tasaSudor = getProperty('tasa_sudor') ? parseFloat(getProperty('tasa_sudor')) : 0.5;
+
+    if (haceCalor && heatIndex > 35) tasaSudor = Math.max(tasaSudor, 1.0);
+    else if (haceCalor && heatIndex > 32) tasaSudor = Math.max(tasaSudor, 0.8);
+    else if (haceCalor && heatIndex > 28) tasaSudor = Math.max(tasaSudor, 0.6);
+
     if (kj > 800) tasaSudor += 0.2;
+
     const sodioMg = Math.round(tasaSudor * CONFIG.NUTRICION.sodioPorLitro);
     const salGramos = (sodioMg / 1000 * 0.4).toFixed(1);
 
@@ -2132,13 +2190,42 @@ function calcularNutricionUnificada(estado, entreno) {
       hidratacion += ` | 🧂 ${sodioMg}mg Sodio/hora (${salGramos}g sal)`;
     }
 
+    // ─── SUPLEMENTACIÓN ESTACIONAL Y POR FASE ───────────────
     let suplementacion = [];
+    const mes = new Date().getMonth() + 1; // 1-12
+
     if (edad > 40) {
-      suplementacion.push(`Omega-3: ${CONFIG.NUTRICION.omega3}`);
-      suplementacion.push(`Vitamina D: ${CONFIG.NUTRICION.vitaminaD}`);
+      // Omega-3: dosis según inflamación (TSB bajo = más inflamación)
+      const omegaDosis = tsb < -15 ? '4g/día' : '3g/día';
+      suplementacion.push(`Omega-3: ${omegaDosis} (${tsb < -15 ? 'dosis antiinflamatoria' : 'mantenimiento'})`);
+
+      // Vitamina D: estacional
+      const vitDDosis = (mes >= 11 || mes <= 3) ? '4000 UI/día' : '2000 UI/día';
+      suplementacion.push(`Vitamina D: ${vitDDosis} (${(mes >= 11 || mes <= 3) ? 'invierno - dosis alta' : 'verano - dosis mantenimiento'})`);
     }
+
     if (haceCalor && heatIndex > 30) {
       suplementacion.push(`Magnesio: ${CONFIG.NUTRICION.magnesio} (por calor)`);
+    }
+
+    // Creatina: siempre recomendada para Master 40+
+    if (edad > 40) {
+      suplementacion.push(`Creatina: ${CONFIG.NUTRICION.creatina || '5g/día'}`);
+    }
+
+    // ─── CONSEJOS ESPECÍFICOS POR FASE ──────────────────────
+    let consejosExtra = [];
+    if (fase === 'base' && kj > 800) {
+      consejosExtra.push('🍝 Fase Base: Asegura 6-7g CH/kg/día para reponer glucógeno');
+    }
+    if (fase === 'especificidad' && ifValor > 0.85) {
+      consejosExtra.push('⚡ Fase Especificidad: Carga de CH 2h antes del entreno (1-2g/kg)');
+    }
+    if (fase === 'taper') {
+      consejosExtra.push('🧘 Taper: Reduce CH totales 20-30% para adaptación metabólica');
+    }
+    if (tsb < -15) {
+      consejosExtra.push('🔴 Fatiga alta: Aumenta proteína a 2.2g/kg y prioriza recuperación');
     }
 
     return {
@@ -2146,6 +2233,7 @@ function calcularNutricionUnificada(estado, entreno) {
       protTotalDia,
       grasaDiaria,
       chInmediato,
+      chDuranteEntreno,
       chCena,
       hidratacion,
       kcalGastoTotal,
@@ -2156,7 +2244,12 @@ function calcularNutricionUnificada(estado, entreno) {
       heatIndex,
       tasaSudor,
       sodioMg,
-      suplementacion
+      suplementacion,
+      protPost,
+      recomendacionDurante,
+      consejosExtra,
+      fase,
+      estrategiaCH: fase === 'taper' ? 'Periodización baja en CH' : 'Carga completa'
     };
   } catch(e) {
     return {
@@ -2164,6 +2257,7 @@ function calcularNutricionUnificada(estado, entreno) {
       protTotalDia: 120,
       grasaDiaria: 60,
       chInmediato: 40,
+      chDuranteEntreno: 0,
       chCena: 200,
       hidratacion: '2L base',
       kcalGastoTotal: 2000,
@@ -2174,7 +2268,12 @@ function calcularNutricionUnificada(estado, entreno) {
       heatIndex: 25,
       tasaSudor: 0.5,
       sodioMg: 250,
-      suplementacion: []
+      suplementacion: [],
+      protPost: 40,
+      recomendacionDurante: '',
+      consejosExtra: [],
+      fase: 'base',
+      estrategiaCH: 'Carga completa'
     };
   }
 }
@@ -2186,98 +2285,129 @@ function calcularNutricionUnificada(estado, entreno) {
 function calcularFuerzaUnificada(estado) {
   try {
     const tsb = estado.tsb || 0;
+    const readiness = estado.readiness || 50;
+    const fase = getFaseActual();
     const semana = getSemanaActual();
-    
-    const esSemanaMaxima = semana % 2 === 1;
-    
-    let nivel, recomendacion, ejercicios = [];
+    const semanasEnFase = getSemanasFase();
 
-    const movilidadBase = [
-      '🦵 Estiramiento isquios: 3x30"',
-      '🦵 Estiramiento psoas: 3x30" c/lado',
-      '🔄 Movilidad cadera: 3x15 c/lado',
-      '🔄 Rotaciones cervicales y dorsales'
-    ];
-
-    if (tsb < -20 || estado.readiness < 40) {
-      nivel = 'Recuperación Activa';
-      recomendacion = 'NO hagas fuerza con peso. Prioriza movilidad y estiramientos.';
-      ejercicios = [
-        'Plancha frontal: 3x30"',
-        'Plancha lateral: 3x20" c/lado',
-        'Bird-dog: 3x10 c/lado',
-        'Glute bridge: 3x12',
-        'Dead bug: 3x8 c/lado'
-      ];
-    } else if (tsb < -10 || estado.readiness < 55) {
-      nivel = 'Ligera-Moderada';
-      recomendacion = 'Fuerza ligera para mantener tono. Sin fallo muscular.';
-      ejercicios = [
-        'Sentadilla goblet: 3x10 (8-12kg)',
-        'Peso muerto rumano: 3x10 (2x8-12kg)',
-        'Zancadas: 3x8 c/pierna',
-        'Remo con banda: 3x12',
-        'Plancha: 3x30" frontal + 20" lateral'
-      ];
-    } else if (tsb < 5) {
-      if (esSemanaMaxima) {
-        nivel = 'Fuerza Máxima (Semana 1/3)';
-        recomendacion = 'Cargas altas, pocas repeticiones. Enfoque en reclutamiento neuronal.';
-        ejercicios = [
-          'Sentadilla: 5x5 (25-35kg)',
-          'Peso muerto: 4x5 (30-40kg)',
-          'Zancada búlgara: 3x6-8 c/pierna',
-          'Hip thrust pesado: 4x6 (15-20kg)',
-          'Remo pesado: 4x6 (16-20kg)',
-          'Core: 3x8-10 rueda'
-        ];
-      } else {
-        nivel = 'Fuerza Resistencia (Semana 2/4)';
-        recomendacion = 'Cargas medias, más repeticiones. Enfoque en resistencia muscular.';
-        ejercicios = [
-          'Sentadilla: 3x15 (12-16kg)',
-          'Peso muerto: 3x15 (14-18kg)',
-          'Zancadas: 3x12 c/pierna (2x8-12kg)',
-          'Hip thrust: 3x15 (10-15kg)',
-          'Remo: 3x15 c/brazo (8-12kg)',
-          'Core: 3x15-20 plancha'
-        ];
+    // ─── SINCRONIZAR FUERZA CON LA FASE DE ENTRENAMIENTO ──────
+    const faseFuerza = {
+      'base': {
+        nombre: '🏗️ Mantenimiento + Resistencia',
+        enfoque: 'Preparación física general, Core + Estabilidad',
+        seriesReps: semana <= 2 ? '3x12-15' : '3x10-12',
+        rpe: 'RPE 6-7 (2-3 repes en reserva)'
+      },
+      'desarrollo': {
+        nombre: '📈 Hipertrofia + Fuerza Resistencia',
+        enfoque: 'Trabajo unilateral + Core avanzado',
+        seriesReps: semana <= 2 ? '4x10-12' : '3x8-10',
+        rpe: 'RPE 7-8 (1-2 repes en reserva)'
+      },
+      'especificidad': {
+        nombre: '🎯 Fuerza Máxima + Potencia',
+        enfoque: 'Cargas altas, pocas repeticiones, reclutamiento neuronal',
+        seriesReps: semana <= 2 ? '5x5' : '4x6-8',
+        rpe: 'RPE 8-9 (0-1 repes en reserva)'
+      },
+      'taper': {
+        nombre: '🧘 Descarga + Mantenimiento',
+        enfoque: 'Mantenimiento sin fatiga, movilidad',
+        seriesReps: '2x10-12',
+        rpe: 'RPE 5-6 (fácil)'
       }
+    };
+
+    const faseActual = faseFuerza[fase] || faseFuerza.base;
+
+    // ─── EJERCICIOS BASE POR CATEGORÍA ───────────────────────
+    const ejerciciosBase = {
+      general: [
+        { nombre: 'Sentadilla', variantes: ['Goblet', 'Barra', 'Búlgara'], peso: '8-40kg' },
+        { nombre: 'Peso muerto', variantes: ['Rumano', 'Convencional', 'A una pierna'], peso: '10-45kg' },
+        { nombre: 'Zancadas', variantes: ['Estáticas', 'Búlgaras', 'Laterales'], peso: '8-20kg' },
+        { nombre: 'Hip thrust', variantes: ['Bilateral', 'Unilateral', 'A una pierna'], peso: '10-25kg' },
+        { nombre: 'Remo', variantes: ['Con mancuerna', 'Con barra', 'Máquina'], peso: '8-22kg' }
+      ],
+      core: [
+        'Plancha: 3x30-60"',
+        'Dead bug: 3x10-15 c/lado',
+        'Bird-dog: 3x10-15 c/lado',
+        'Rueda abdominal: 3x8-12',
+        'Dragon flag: 3x6-8'
+      ],
+      prevencion: [
+        '🦶 Step-up lateral: 3x10-12 c/pierna (PREVENCIÓN RODILLA)',
+        '🦶 Estiramiento cuádriceps: 3x30" c/pierna',
+        '🦶 Copenhague plank: 3x20-30" c/lado (PREVENCIÓN ISQUIOS)',
+        '🦶 Talón-glúteo dinámico: 3x15 c/pierna',
+        '🦶 Rotación externa cadera con banda: 3x15 c/pierna',
+        '🦶 Elevación de talón excéntrica: 3x15 (PREVENCIÓN AQUILES)'
+      ]
+    };
+
+    // ─── ADAPTACIÓN POR FATIGA ───────────────────────────────
+    let nivel, recomendacion, ejercicios = [];
+    const isFatigado = tsb < -15 || readiness < 50;
+    const isModeradamenteFatigado = tsb < -5 || readiness < 65;
+    const esSemanaMaxima = fase === 'especificidad' && semana <= 2;
+
+    if (tsb < -20 || readiness < 40) {
+      nivel = '🔴 Recuperación Activa - NO HAGAS FUERZA CON PESO';
+      recomendacion = 'Prioriza movilidad, activación y prevención de lesiones';
+      ejercicios = [
+        ...ejerciciosBase.prevencion.slice(0, 3),
+        ...ejerciciosBase.core.slice(0, 2),
+        'Glute bridge: 3x15',
+        'Clamshell con banda: 3x15 c/lado'
+      ];
+    } else if (tsb < -10 || readiness < 55) {
+      nivel = `🟡 ${faseActual.nombre} - Versión suave`;
+      const rpeBase = parseInt(faseActual.rpe.split('-')[0]) - 2;
+      const rpeMax = parseInt(faseActual.rpe.split('-')[1]) - 2;
+      recomendacion = `Fase: ${fase}. Sin fallo muscular. RPE ${rpeBase}-${rpeMax}`;
+      ejercicios = [
+        `${ejerciciosBase.general[0].nombre} (${ejerciciosBase.general[0].variantes[0]}): ${faseActual.seriesReps} (${ejerciciosBase.general[0].peso.split('-')[0]}-${Math.round(parseInt(ejerciciosBase.general[0].peso.split('-')[1]) * 0.7)}kg)`,
+        `${ejerciciosBase.general[4].nombre}: ${faseActual.seriesReps}`,
+        ...ejerciciosBase.core.slice(0, 2),
+        ...ejerciciosBase.prevencion.slice(0, 2)
+      ];
     } else {
+      nivel = `🟢 ${faseActual.nombre}`;
+      recomendacion = `${faseActual.enfoque} | ${faseActual.rpe}`;
+
       if (esSemanaMaxima) {
-        nivel = 'Fuerza Máxima Avanzada (Semana 1/3)';
-        recomendacion = 'Estás muy fresco. Aprovecha para fuerza máxima.';
         ejercicios = [
-          'Sentadilla: 5x5 (30-40kg)',
-          'Peso muerto: 4x5 (35-45kg)',
-          'Zancada búlgara: 3x6-8 c/pierna (2x12-16kg)',
-          'Hip thrust pesado: 4x6 (20-25kg)',
-          'Remo pesado: 4x6 (18-22kg)',
-          'Core avanzado: 3x6-8 dragon flag'
+          `${ejerciciosBase.general[0].nombre} (${ejerciciosBase.general[0].variantes[1]}): ${faseActual.seriesReps} (${ejerciciosBase.general[0].peso})`,
+          `${ejerciciosBase.general[1].nombre} (${ejerciciosBase.general[1].variantes[1]}): ${faseActual.seriesReps} (${ejerciciosBase.general[1].peso})`,
+          `${ejerciciosBase.general[2].nombre} (${ejerciciosBase.general[2].variantes[1]}): ${faseActual.seriesReps} (${ejerciciosBase.general[2].peso})`,
+          ...ejerciciosBase.core.slice(1, 3),
+          ...ejerciciosBase.prevencion.slice(0, 1)
         ];
       } else {
-        nivel = 'Fuerza Resistencia Avanzada (Semana 2/4)';
-        recomendacion = 'Aprovecha la frescura para trabajo de resistencia muscular.';
         ejercicios = [
-          'Sentadilla: 3x15 (16-20kg)',
-          'Peso muerto: 3x15 (18-22kg)',
-          'Zancada búlgara: 3x12 c/pierna (2x10-14kg)',
-          'Hip thrust: 3x15 (12-18kg)',
-          'Remo: 3x15 c/brazo (10-14kg)',
-          'Core: 3x15-20 plancha avanzada'
+          `${ejerciciosBase.general[0].nombre} (${ejerciciosBase.general[0].variantes[0]}): ${faseActual.seriesReps} (${ejerciciosBase.general[0].peso})`,
+          `${ejerciciosBase.general[1].nombre} (${ejerciciosBase.general[1].variantes[2]}): ${faseActual.seriesReps} (${ejerciciosBase.general[1].peso})`,
+          `${ejerciciosBase.general[2].nombre} (${ejerciciosBase.general[2].variantes[2]}): ${faseActual.seriesReps} (${ejerciciosBase.general[2].peso})`,
+          ...ejerciciosBase.core,
+          ...ejerciciosBase.prevencion.slice(0, 2)
         ];
       }
     }
 
+    // ─── MOVILIDAD OBLIGATORIA ───────────────────────────────
+    const movilidadObjetivo = calcularMovilidadAdaptativa(estado);
+
     return {
       nivel,
       recomendacion,
-      ejercicios,
-      movilidadBase,
-      duracion: tsb < -20 ? '15-20 min' : tsb < -10 ? '25-30 min' : '35-50 min',
-      recomendado: tsb < -15 ? false : true,
-      faseFuerza: esSemanaMaxima ? 'Máxima' : 'Resistencia',
-      semanaFuerza: semana
+      ejercicios: ejercicios.slice(0, 6),
+      movilidadBase: movilidadObjetivo.ejercicios,
+      duracion: isFatigado ? '15-20 min' : isModeradamenteFatigado ? '25-30 min' : '35-45 min',
+      recomendado: !isFatigado,
+      faseFuerza: faseActual.nombre,
+      semanaFuerza: semana,
+      prevencion: ejerciciosBase.prevencion.slice(0, 3)
     };
   } catch(e) {
     return {
@@ -2288,7 +2418,8 @@ function calcularFuerzaUnificada(estado) {
       duracion: '20 min',
       recomendado: true,
       faseFuerza: 'Básico',
-      semanaFuerza: 1
+      semanaFuerza: 1,
+      prevencion: []
     };
   }
 }
@@ -4394,10 +4525,12 @@ async function cmdNutricion() {
 
   // ─── SECCIÓN 3: OBJETIVOS MACRO DIARIOS ──────────────────────
   msg += '*📊 OBJETIVOS MACRO DIARIOS*\n';
+  if (n.fase) msg += `• 📅 Estrategia: ${n.estrategiaCH || 'Carga completa'} (Fase: ${n.fase})\n`;
   msg += `• 🍞 Carbohidratos: *${n.chTotalDia}g*\n`;
   msg += `  → Inmediato post-entreno: ${n.chInmediato}g\n`;
+  if (n.chDuranteEntreno > 0) msg += `  → Durante entreno: ${n.chDuranteEntreno}g\n`;
   msg += `  → Resto del día: ${n.chCena}g\n`;
-  msg += `• 🍗 Proteína: *${n.protTotalDia}g* (${CONFIG.NUTRICION.proteinaPostMaster}g post-entreno)\n`;
+  msg += `• 🍗 Proteína: *${n.protTotalDia}g* (${n.protPost || CONFIG.NUTRICION.proteinaPostMaster}g post-entreno)\n`;
   msg += `• 🥑 Grasas: *${n.grasaDiaria}g*\n\n`;
 
   // ─── SECCIÓN 4: SUPLEMENTACIÓN ───────────────────────────────
@@ -4409,6 +4542,10 @@ async function cmdNutricion() {
 
   // ─── SECCIÓN 5: TIMING POST-ENTRENO ──────────────────────────
   if (workout && workout.tipo !== 'descanso') {
+    if (n.recomendacionDurante) {
+      msg += '*🚴 DURANTE EL ENTRENO*\n';
+      msg += `• ${n.recomendacionDurante}\n\n`;
+    }
     msg += '*⏳ TIMING POST-ENTRENO (VENTANA ANABÓLICA)*\n';
     msg += `🥤 *0-30 min:* ${n.chInmediato}g CH + ${CONFIG.NUTRICION.proteinaPostMaster}g Proteína\n`;
     msg += `   Ej: Batido recuperador (plátano + leche + suero)\n\n`;
@@ -4513,6 +4650,13 @@ async function cmdNutricion() {
     msg += '• Come cada 3-4 horas para mantener energía\n';
     msg += '• Prioriza alimentos integrales y proteína magra\n';
   }
+  // ─── SECCIÓN 9: CONSEJOS EXTRA POR FASE ──────────────────────
+  if (n.consejosExtra && n.consejosExtra.length > 0) {
+    msg += '\n🎯 *CONSEJOS ESPECÍFICOS POR FASE*\n';
+    n.consejosExtra.forEach(consejo => { msg += `• ${consejo}\n`; });
+    msg += '\n';
+  }
+
   msg += `\n_📊 Edad: ${CONFIG.AGE_YEARS} años | Peso: ${CONFIG.WEIGHT_KG}kg | Fase: ${getNombreFase()}_`;
   await sendTelegramLong(msg);
 }
@@ -4540,6 +4684,11 @@ async function cmdFuerza() {
   if (f.movilidadBase && f.movilidadBase.length > 0) {
     msg += '\n*🧘 MOVILIDAD DIARIA OBLIGATORIA*\n';
     f.movilidadBase.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
+  }
+  
+  if (f.prevencion && f.prevencion.length > 0) {
+    msg += '\n*🛡️ PREVENCIÓN DE LESIONES*\n';
+    f.prevencion.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
   }
   
   msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /movilidad';
