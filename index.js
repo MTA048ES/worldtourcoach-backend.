@@ -1277,16 +1277,18 @@ async function calcularEstadoSistema(datos) {
     weeklyTss
   }, historialParaReadiness);
   
-  readiness = readinessResult.readiness;
+  let readiness = readinessResult.readiness;
+  let readinessAlertas = [];
+  let readinessTendencias = null;
   
   // Añadir alertas al estado si hay
   if (readinessResult.alertas && readinessResult.alertas.length > 0) {
-    estado.readinessAlertas = readinessResult.alertas;
+    readinessAlertas = readinessResult.alertas;
   }
   
   // Guardar tendencias para debugging
   if (readinessResult.tendencias) {
-    estado.readinessTendencias = readinessResult.tendencias;
+    readinessTendencias = readinessResult.tendencias;
   }
 
   let factorCalor = 1.0;
@@ -1347,6 +1349,8 @@ async function calcularEstadoSistema(datos) {
     hrv,
     sleepQuality,
     readiness,
+    readinessAlertas,
+    readinessTendencias,
     weeklyTss,
     weeklyHours,
     weeklySessions,
@@ -6250,7 +6254,16 @@ app.post('/webhook', async (req, res) => {
     
     // No continuar aquí - el procesamiento se hace en procesarSiguienteMensaje()
     return;
-    
+  } catch (err) {
+    console.log('[Webhook] ERROR:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
+async function procesarWebhook(body, res) {
+  try {
     const message = body.message || body.edited_message || body.channel_post;
     if (!message) return res.status(200).json({ ok: true });
     if (message.from && message.from.is_bot) return res.status(200).json({ ok: true });
@@ -6264,8 +6277,6 @@ app.post('/webhook', async (req, res) => {
     if (!rawText) return res.status(200).json({ ok: true });
     console.log('[Webhook] Mensaje:', rawText);
 
-async function procesarWebhook(body, res) {
-  try {
     const esperandoDesviacion = getUserProperty('esperando_respuesta_desviacion');
     if (esperandoDesviacion === 'true') {
       const procesado = await procesarRespuestaDesviacion(rawText);
