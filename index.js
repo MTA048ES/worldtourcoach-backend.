@@ -1124,7 +1124,7 @@ async function obtenerDatosCompletos() {
   }
 }
 
-function calcularEstadoSistema(datos) {
+async function calcularEstadoSistema(datos) {
   if (!datos || !datos.today) {
     return {
       ctl: 50,
