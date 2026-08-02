@@ -134,7 +134,7 @@ const CONFIG = {
   // ─── OPENROUTER AI ───────────────────────────────────────────
   OPENROUTER: {
     API_KEY: process.env.OPENROUTER_API_KEY,
-    MODEL: 'google/gemini-2.5-flash:free', // Modelo gratuito por defecto
+    MODEL: 'google/gemini-2.0-flash-exp:free', // Modelo gratuito (experimental)
     FALLBACK_MODEL: 'meta-llama/llama-3.3-70b-instruct:free', // Modelo gratuito fallback
     MAX_TOKENS: 2000,
     TEMPERATURE: 0.7,
