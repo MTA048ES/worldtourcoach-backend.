@@ -814,20 +814,22 @@ INSTRUCCIONES:
         
         const fetchWithTimeout = Promise.race([
           fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
-            'HTTP-Referer': 'https://worldtourcoach.com',
-            'X-Title': 'World Tour Coach'
-          },
-          body: JSON.stringify({
-            model: modelo,
-            messages: messages,
-            max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
-            temperature: CONFIG.OPENROUTER.TEMPERATURE
-          })
-        });
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
+              'HTTP-Referer': 'https://worldtourcoach.com',
+              'X-Title': 'World Tour Coach'
+            },
+            body: JSON.stringify({
+              model: modelo,
+              messages: messages,
+              max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
+              temperature: CONFIG.OPENROUTER.TEMPERATURE
+            })
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 10s')), 10000))
+        ]);
         const response = await fetchWithTimeout;
 
         console.log(`[OpenRouter] 📥 Response status (${modelo}):`, response.status);
