@@ -713,21 +713,77 @@ async function chatConIA(prompt, contexto = '') {
     CONFIG.OPENROUTER.ENABLED = true;
     console.log('[OpenRouter] ✅ API_KEY detectada. Modelos disponibles:', CONFIG.OPENROUTER.MODELS.length);
 
+    // ─── OBTENER CONTEXTO REAL DEL SISTEMA ──────────────────────
+    let contextoSistema = '';
+    try {
+      const state = await getAthleteState();
+      if (state) {
+        const e = state.estado;
+        const n = state.nutricion;
+        const w = state.workout;
+        
+        contextoSistema = `
+CONTEXTO REAL DEL SISTEMA (DATOS DE HOY):
+══════════════════════════════════━━════
+
+📊 ESTADO DE ENTRENAMIENTO:
+• FTP: ${CONFIG.FTP}W | Objetivo: 296W
+• Fase: ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})
+• CTL: ${e.ctl.toFixed(1)} | ATL: ${e.atl.toFixed(1)} | TSB: ${e.tsb.toFixed(1)}
+• Readiness: ${state.readiness}/100
+• HRV: ${e.hrv || 'N/D'}
+• Sueño: ${e.sleepQuality === 1 ? 'Malo' : e.sleepQuality === 2 ? 'Regular' : 'Bueno'}
+• ACWR: ${e.acwr.toFixed(2)}
+• TSS semanal: ${Math.round(e.weeklyTss)} / ${state.restricciones.tssMaxSemanal}
+• Sesiones esta semana: ${e.weeklySessions}
+
+🚴 ENTRENO DE HOY:
+• Tipo: ${w ? w.tipo.toUpperCase() : 'N/D'}
+• ${w && w.reps > 0 ? `Estructura: ${w.reps}x${w.durMin}min` : `Duración: ${w ? w.durMin : 'N/D'}min`}
+• Vatios: ${w ? w.vatios.low + '-' + w.vatios.high + 'W' : 'N/D'}
+• IF: ${w ? w.ifEsperado : 'N/D'} | TSS: ${w ? w.tssEsperado : 'N/D'}
+• KJ: ${w ? w.kjEsperados : 'N/D'} | CH: ${w ? w.carbsEsperados : 'N/D'}g
+
+🥗 NUTRICIÓN DE HOY:
+• Calorías objetivo: ${n.kcalGastoTotal} kcal
+• Carbohidratos: ${n.chTotalDia}g (Inmediato: ${n.chInmediato}g | Durante: ${n.chDuranteEntreno}g | Resto: ${n.chCena}g)
+• Proteína: ${n.protTotalDia}g (Post-entreno: ${n.protPost}g)
+• Grasas: ${n.grasaDiaria}g
+• Hidratación: ${n.hidratacion}
+• ${n.haceCalor ? '🔥 Calor: HI ' + n.heatIndex + '°C' : '✅ Sin calor extremo'}
+
+🌡️ CLIMA:
+• Temperatura: ${state.tempActual}°C (Heat Index: ${state.heatIndex}°C)
+• ${state.haceCalor ? '⚠️ Calor detectado - adaptaciones activas' : '✅ Condiciones normales'}
+
+🎯 OBJETIVO:
+• FTP actual: ${CONFIG.FTP}W → Objetivo: 296W (faltan ${296 - CONFIG.FTP}W)
+• ${state.proyeccion ? state.proyeccion.mensaje : ''}
+
+════════════════════════════════════════`;
+      }
+    } catch (ctxErr) {
+      console.log('[chatConIA] Error obteniendo contexto:', ctxErr.message);
+    }
+
     const systemPrompt = `Eres el asistente de World Tour Coach, un sistema avanzado de entrenamiento de ciclismo para Manu (43 años, Master 40+).
 
-CONTEXTO DEL SISTEMA:
-- Objetivo: Recuperar 296W de FTP (actual: ${CONFIG.FTP}W)
-- Fase actual: ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})
-- Edad: ${CONFIG.AGE_YEARS} años
-- Peso: ${CONFIG.WEIGHT_KG}kg
-- FTP: ${CONFIG.FTP}W
+${contextoSistema}
+
+PERFIL DEL ATLETA:
+• Edad: ${CONFIG.AGE_YEARS} años (Master 40+)
+• Peso: ${CONFIG.WEIGHT_KG}kg
+• Altura: ${CONFIG.HEIGHT_CM}cm
+• FTP: ${CONFIG.FTP}W
+• Objetivo: Recuperar 296W de FTP
 
 CAPACIDADES:
 - Periodización de entrenamiento (Base, Desarrollo, Especificidad, Taper)
-- Nutrición avanzada para ciclistas
+- Nutrición avanzada para ciclistas (con recetas personalizadas)
 - Análisis de fatiga y recuperación
 - Planificación de fuerza y movilidad
 - Adaptación al clima (Heat Index)
+- Análisis de métricas (TSS, IF, NP, AP, VI, EF)
 
 INSTRUCCIONES:
 - Responde en español, de forma concisa y práctica
@@ -735,7 +791,10 @@ INSTRUCCIONES:
 - Si no tienes información suficiente, pide más detalles
 - Enfócate en consejos prácticos y accionables
 - Considera que es Master 40+ (recuperación más lenta)
-- Máximo 500 caracteres por respuesta`;
+- Personaliza las respuestas según el CONTEXTO REAL del sistema
+- Si te dan ingredientes para una receta, calcula los macros y ajusta a los objetivos del día
+- Si te preguntan sobre entrenamiento, usa el TSB, CTL y readiness actual
+- Máximo 800 caracteres por respuesta`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -816,9 +875,11 @@ async function cmdIA(args) {
     
     if (!prompt || prompt.length === 0) {
       await sendTelegram(`🤖 *WORLD TOUR COACH - ASISTENTE IA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`);
-      await sendTelegram(`Escribe tu pregunta sobre entrenamiento, nutrición, recuperación o cualquier tema de ciclismo.\n\n`);
-      await sendTelegram(`*Ejemplos:*\n• /ia ¿Cómo debo alimentarme antes de una salida de 3h?\n• /ia ¿Es mejor entrenar por la mañana o por la tarde?\n• /ia Tengo fatiga acumulada, ¿qué hago?\n• /ia ¿Cómo mejoro mi recuperación?\n\n`);
-      await sendTelegram(`💡 *Consejo:* Sé específico en tu pregunta para obtener mejores respuestas.`);
+      await sendTelegram(`La IA conoce tu estado real: TSB, CTL, readiness, nutrición, clima y fase de entrenamiento.\n\n`);
+      await sendTelegram(`*🏋️ ENTRENAMIENTO:*\n• /ia Según mi entrenamiento, ¿cómo puedo mejorar mi VO2max?\n• /ia ¿Qué tipo de entreno me conviene hoy con mi TSB?\n• /ia ¿Cuántas series de SweetSpot debería hacer?\n• /ia ¿Es buen día para entrenar intensidad?\n\n`);
+      await sendTelegram(`*🥗 NUTRICIÓN Y RECETAS:*\n• /ia Tengo arroz, pollo y brócoli, ¿creas una receta con mis macros?\n• /ia ¿Cómo debo alimentarme antes de una salida de 3h?\n• /ia ¿Qué comer post-entreno hoy?\n• /ia Calcula los macros de: 100g pasta + 150g salmón + aceite\n\n`);
+      await sendTelegram(`*🧠 RECUPERACIÓN Y SALUD:*\n• /ia Tengo fatiga acumulada, ¿qué hago?\n• /ia ¿Cómo mejoro mi recuperación siendo Master 40+?\n• /ia ¿Cuánto descanso necesito después de un TSS de 150?\n• /ia ¿Qué suplementos me convienen?\n\n`);
+      await sendTelegram(`💡 *La IA usa tus datos reales:* FTP, peso, fase, TSB, nutrición del día, clima, etc.`);
       return;
     }
 
