@@ -675,14 +675,18 @@ function estaAclimatado() {
 
 async function sendTelegram(text) {
   if (!CONFIG.TELEGRAM_TOKEN || !CONFIG.CHAT_ID) {
-    console.log('[sendTelegram] ERROR: Falta TOKEN o CHAT_ID');
-    return;
+    console.log('[sendTelegram] ❌ ERROR: Falta TOKEN o CHAT_ID');
+    console.log('[sendTelegram] TOKEN:', CONFIG.TELEGRAM_TOKEN ? '✅ Presente' : '❌ Falta');
+    console.log('[sendTelegram] CHAT_ID:', CONFIG.CHAT_ID || '❌ Falta');
+    return { success: false, error: 'Falta configuración' };
   }
 
   const safeText = (typeof text === 'string' && text.length > 0) ? text : '(mensaje vacio)';
   const url = `https://api.telegram.org/bot${CONFIG.TELEGRAM_TOKEN}/sendMessage`;
 
   try {
+    console.log(`[sendTelegram] 📤 Enviando mensaje (${safeText.length} chars)...`);
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -694,8 +698,13 @@ async function sendTelegram(text) {
       })
     });
 
+    const responseText = await response.text();
+    console.log(`[sendTelegram] 📥 Response status: ${response.status}`);
+    console.log(`[sendTelegram] 📥 Response body: ${responseText.substring(0, 200)}`);
+
     if (!response.ok) {
-      await fetch(url, {
+      console.log('[sendTelegram] ⚠️ Primer intento falló, reintentando sin Markdown...');
+      const response2 = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -703,9 +712,26 @@ async function sendTelegram(text) {
           text: safeText.replace(/[*_`\[\]]/g, ''),
         })
       });
+      
+      const response2Text = await response2.text();
+      console.log(`[sendTelegram] 📥 Segundo intento status: ${response2.status}`);
+      console.log(`[sendTelegram] 📥 Segundo intento body: ${response2Text.substring(0, 200)}`);
+      
+      if (response2.ok) {
+        console.log('[sendTelegram] ✅ Segundo intento exitoso');
+        return { success: true, retry: true };
+      } else {
+        console.log('[sendTelegram] ❌ Segundo intento también falló');
+        return { success: false, error: response2Text };
+      }
     }
+    
+    console.log('[sendTelegram] ✅ Mensaje enviado exitosamente');
+    return { success: true };
+    
   } catch(e) {
-    console.log('[sendTelegram] ERROR:', e.toString());
+    console.log('[sendTelegram] ❌ ERROR de red:', e.toString());
+    return { success: false, error: e.toString() };
   }
 }
 
