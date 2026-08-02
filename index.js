@@ -995,19 +995,27 @@ function calcularEstadoSistema(datos) {
     }
   });
 
-  let readiness = 70;
-  if (tsb < -20) readiness -= 20;
-  else if (tsb < -10) readiness -= 10;
-  if (hrv < 40) readiness -= 15;
-  else if (hrv < 50) readiness -= 5;
-  if (sleepQuality === 1) readiness -= 20;
-  else if (sleepQuality === 2) readiness -= 5;
-  if (pasos > 15000) readiness -= 5;
-  else if (pasos > 20000) readiness -= 10;
-  if (sleepQuality === 3) readiness += 10;
-  if (hrv > 60) readiness += 10;
-  if (tsb > 10) readiness += 10;
-  readiness = Math.max(10, Math.min(100, Math.round(readiness)));
+  // ─── READINESS CON TENDENCIAS Y APRENDIZAJE ─────────────────
+  const historialParaReadiness = await obtenerHistorialAsync();
+  const readinessResult = calcularReadinessConTendencia({
+    tsb,
+    hrv,
+    sleepQuality,
+    pasos,
+    weeklyTss
+  }, historialParaReadiness);
+  
+  readiness = readinessResult.readiness;
+  
+  // Añadir alertas al estado si hay
+  if (readinessResult.alertas && readinessResult.alertas.length > 0) {
+    estado.readinessAlertas = readinessResult.alertas;
+  }
+  
+  // Guardar tendencias para debugging
+  if (readinessResult.tendencias) {
+    estado.readinessTendencias = readinessResult.tendencias;
+  }
 
   let factorCalor = 1.0;
   let haceCalor = false;
