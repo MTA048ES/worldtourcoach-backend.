@@ -134,19 +134,22 @@ const CONFIG = {
   // ─── OPENROUTER AI ───────────────────────────────────────────
   OPENROUTER: {
     API_KEY: process.env.OPENROUTER_API_KEY,
-    // Lista de modelos gratuitos - se prueban en orden hasta que uno funcione
+    // Lista de modelos gratuitos ACTUALIZADA (verificada vía API OpenRouter)
     MODELS: [
-      'google/gemini-2.0-flash-exp:free',
-      'meta-llama/llama-3.3-70b-instruct:free',
-      'meta-llama/llama-3.2-3b-instruct:free',
-      'mistralai/mistral-7b-instruct:free',
-      'mistralai/mistral-nemo:free',
-      'qwen/qwen-2.5-7b-instruct:free',
-      'microsoft/phi-3-mini-128k-instruct:free',
-      'nousresearch/hermes-3-llama-3.1-405b:free',
-      'sao10k/l3-euryale-70b:free',
-      'openchat/openchat-7b:free',
-      'huggingfaceh4/zephyr-7b-beta:free'
+      'google/gemma-4-31b-it:free',
+      'google/gemma-4-26b-a4b-it:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'nvidia/nemotron-3-super-120b-a12b:free',
+      'nvidia/nemotron-3-nano-30b-a3b:free',
+      'nvidia/nemotron-nano-9b-v2:free',
+      'openai/gpt-oss-20b:free',
+      'inclusionai/ling-3.0-flash:free',
+      'poolside/laguna-s-2.1:free',
+      'poolside/laguna-xs-2.1:free',
+      'cohere/north-mini-code:free',
+      'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+      'nvidia/nemotron-nano-12b-v2-vl:free',
+      'nvidia/nemotron-3.5-content-safety:free'
     ],
     MAX_TOKENS: 2000,
     TEMPERATURE: 0.7,
