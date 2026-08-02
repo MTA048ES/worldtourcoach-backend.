@@ -23,29 +23,3 @@ Thumbs.db
 
 # Temporary scripts
 *.bat
-</arg_value>
-<task_progress>
-- [x] Revisar estado actual del proyecto
-- [x] Identificar próximos pasos
-- [x] Verificar funciones duplicadas en index.js (no hay duplicados)
-- [x] Verificar qué funciones faltantes del REVIEW.js no están en index.js (todas ya existen)
-- [x] Verificar si las mejoras del REVIEW.js están integradas (movilidad y readiness ya integradas)
-- [x] Leer funciones actuales de movilidad/fuerza/nutrición en index.js
-- [x] Comparar con las versiones mejoradas del REVIEW.js
-- [x] Mejorar calcularNutricionUnificada con periodización por fase
-- [x] Mejorar calcularFuerzaUnificada con sincronización de fase
-- [x] Actualizar cmdNutricion para mostrar nuevos campos
-- [x] Actualizar cmdFuerza para mostrar prevención
-- [x] Añadir recomendacionDurante a cmdNutricion
-- [x] Añadir consejosExtra a cmdNutricion
-- [x] Verificar que el código funciona (sintaxis OK)
-- [x] Instalar PowerShell 7+ (MSI necesita admin - no disponible)
-- [x] Actualizar configuración de VSCode (shell integration + cmd.exe)
-- [x] Subir cambios a GitHub (commit y push completados)
-- [x] Revisar archivo ENV para seguridad
-- [x] Verificar .gitignore (no existía, creado)
-- [ ] Eliminar ENV de git tracking
-- [ ] Commitear y pushear cambios de seguridad
-- [ ] Limpiar archivos batch temporales
-</task_progress>
-</write_to_file></tool_call>
