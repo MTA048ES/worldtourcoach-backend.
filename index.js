@@ -1178,15 +1178,34 @@ async function fetchWeatherSafe() {
   try { return await fetchWeather(); } catch(e) { return null; }
 }
 
+async function fetchActivitiesSafe(limit) {
+  try { return await fetchActivities(limit); } catch(e) { console.log('[fetchActivitiesSafe] Error:', e.message); return []; }
+}
+
 async function obtenerDatosCompletos() {
   try {
+    console.log('[obtenerDatosCompletos] 1. Obteniendo wellness...');
     const wellness = await fetchWellnessSafe(7);
     const today = (wellness && wellness.length > 0) ? wellness[wellness.length - 1] : null;
-    const activities = await fetchActivities(28);
+    console.log('[obtenerDatosCompletos] 2. Wellness OK. today:', today ? '✅' : '❌ null');
+    
+    console.log('[obtenerDatosCompletos] 3. Obteniendo actividades...');
+    const activities = await fetchActivitiesSafe(28);
+    console.log('[obtenerDatosCompletos] 4. Actividades OK:', activities.length);
+    
+    console.log('[obtenerDatosCompletos] 5. Obteniendo clima...');
     const weather = await fetchWeatherSafe();
+    console.log('[obtenerDatosCompletos] 6. Clima OK:', weather ? '✅' : '❌ null');
+    
     const pasos = today ? safeNum(today.steps) || safeNum(today.stepsCount) || 0 : 0;
     const sueño = today ? safeNum(today.sleepQuality) || 2 : 2;
     const hrv = today ? safeNum(today.hrv) || 50 : 50;
+
+    const ctl = today ? safeNum(today.ctl, 50) : 50;
+    const atl = today ? safeNum(today.atl, 50) : 50;
+    const tsb = ctl - atl;
+    
+    console.log('[obtenerDatosCompletos] 7. Datos calculados. CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
 
     return {
       wellness,
@@ -1196,12 +1215,13 @@ async function obtenerDatosCompletos() {
       pasos,
       sueño,
       hrv,
-      ctl: today ? safeNum(today.ctl, 50) : 50,
-      atl: today ? safeNum(today.atl, 50) : 50,
-      tsb: today ? (safeNum(today.ctl, 50) - safeNum(today.atl, 50)) : 0
+      ctl,
+      atl,
+      tsb
     };
   } catch (err) {
     console.log('[obtenerDatosCompletos] ERROR:', err.toString());
+    console.log('[obtenerDatosCompletos] Stack:', err.stack);
     return null;
   }
 }
@@ -2792,8 +2812,88 @@ async function getAthleteState() {
     console.log('[getAthleteState] 1. Obteniendo datos...');
     const datos = await obtenerDatosCompletos();
     if (!datos || !datos.today) {
-      console.log('[getAthleteState] ❌ Sin datos o today');
-      return null;
+      console.log('[getAthleteState] ⚠️ Sin datos de wellness - usando valores por defecto');
+      // Usar valores por defecto para que los comandos funcionen
+      const estadoFallback = {
+        ctl: 50,
+        atl: 50,
+        tsb: 0,
+        hrv: 50,
+        sleepQuality: 2,
+        readiness: 50,
+        weeklyTss: 0,
+        weeklyHours: 0,
+        weeklySessions: 0,
+        tendencia: 'estable',
+        acwr: 1.0,
+        recuperacionNecesaria: 'normal',
+        pasos: 0,
+        factorCalor: 1.0,
+        tempActual: 25,
+        heatIndex: 25,
+        humidity: 50,
+        haceCalor: false,
+        flags: {
+          estaFatigado: false,
+          estaMuyFatigado: false,
+          estaDescansado: false,
+          sobreCargaSemanal: false,
+          necesitaRecuperacion: false,
+          haceCalor: false
+        }
+      };
+      
+      const restriccionesFallback = aplicarRestriccionesGlobales(estadoFallback, CONFIG.AGE_YEARS || 43);
+      const decisionFallback = decidirEntrenamiento(estadoFallback, restriccionesFallback);
+      const workoutFallback = generateWorkout(estadoFallback, restriccionesFallback, decisionFallback, traza);
+      const nutricionFallback = calcularNutricionUnificada(estadoFallback, {
+        tipo: workoutFallback.tipo.toUpperCase(),
+        reps: workoutFallback.reps,
+        durMin: workoutFallback.durMin,
+        kjEsperados: workoutFallback.kjEsperados,
+        ifEsperado: workoutFallback.ifEsperado,
+        duracionTotalMin: workoutFallback.duracionTotalMin
+      });
+      const fuerzaFallback = calcularFuerzaUnificada(estadoFallback);
+      const consejoFallback = generarConsejoUnificado(estadoFallback, decisionFallback, restriccionesFallback);
+      
+      return {
+        timestamp: new Date(),
+        datos: datos || { today: null, activities: [], weather: null },
+        estado: estadoFallback,
+        restricciones: restriccionesFallback,
+        decision: decisionFallback,
+        workout: workoutFallback,
+        entreno: {
+          tipo: workoutFallback.tipo.toUpperCase(),
+          reps: workoutFallback.reps,
+          durMin: workoutFallback.durMin,
+          recSec: workoutFallback.recSec,
+          wLow: workoutFallback.vatios.low,
+          wHigh: workoutFallback.vatios.high,
+          ifEsperado: workoutFallback.ifEsperado,
+          tssEsperado: workoutFallback.tssEsperado,
+          kjEsperados: workoutFallback.kjEsperados,
+          carbsEsperados: workoutFallback.carbsEsperados,
+          duracionTotalMin: workoutFallback.duracionTotalMin
+        },
+        nutricion: nutricionFallback,
+        fuerza: fuerzaFallback,
+        consejo: consejoFallback,
+        traza,
+        tsb: 0,
+        readiness: 50,
+        tempActual: 25,
+        heatIndex: 25,
+        haceCalor: false,
+        fase: getFaseActual(),
+        semana: getSemanaActual(),
+        ftpEstimado: CONFIG.FTP,
+        proyeccion: calcularProyeccionObjetivo(),
+        horasRecuperacion: 8,
+        proximoEntreno: 'Mañana',
+        aprendizaje: { stats: { suficiente: false, total: 0 }, probabilidad: { probabilidad: 50, nivel: '🟡 MEDIA', base: 'Sin datos' } }
+      };
     }
 
     registrarInputTraza(traza, 'fecha', new Date().toISOString(), 'Fecha del estado');
