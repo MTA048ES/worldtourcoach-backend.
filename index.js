@@ -842,6 +842,10 @@ async function cmdIA(args) {
       return;
     }
 
+    // DEBUG: Verificar si la API key está cargada
+    console.log('[cmdIA] 🔍 DEBUG - OPENROUTER_API_KEY:', CONFIG.OPENROUTER.API_KEY ? '✅ Presente' : '❌ AUSENTE');
+    console.log('[cmdIA] 🔍 DEBUG - process.env.OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? '✅ Presente' : '❌ AUSENTE');
+    
     await sendTelegram('🤔 *Pensando...*\nConsultando a la IA...');
 
     const resultado = await chatConIA(prompt);
