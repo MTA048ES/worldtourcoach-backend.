@@ -134,8 +134,20 @@ const CONFIG = {
   // ─── OPENROUTER AI ───────────────────────────────────────────
   OPENROUTER: {
     API_KEY: process.env.OPENROUTER_API_KEY,
-    MODEL: 'google/gemini-2.0-flash-exp:free', // Modelo gratuito (experimental)
-    FALLBACK_MODEL: 'meta-llama/llama-3.3-70b-instruct:free', // Modelo gratuito fallback
+    // Lista de modelos gratuitos - se prueban en orden hasta que uno funcione
+    MODELS: [
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'meta-llama/llama-3.2-3b-instruct:free',
+      'mistralai/mistral-7b-instruct:free',
+      'mistralai/mistral-nemo:free',
+      'qwen/qwen-2.5-7b-instruct:free',
+      'microsoft/phi-3-mini-128k-instruct:free',
+      'nousresearch/hermes-3-llama-3.1-405b:free',
+      'sao10k/l3-euryale-70b:free',
+      'openchat/openchat-7b:free',
+      'huggingfaceh4/zephyr-7b-beta:free'
+    ],
     MAX_TOKENS: 2000,
     TEMPERATURE: 0.7,
     ENABLED: false // Se activa cuando hay API key configurada
@@ -696,7 +708,7 @@ async function chatConIA(prompt, contexto = '') {
 
     // Activar OpenRouter si hay API key
     CONFIG.OPENROUTER.ENABLED = true;
-    console.log('[OpenRouter] ✅ API_KEY detectada, modelo:', CONFIG.OPENROUTER.MODEL);
+    console.log('[OpenRouter] ✅ API_KEY detectada. Modelos disponibles:', CONFIG.OPENROUTER.MODELS.length);
 
     const systemPrompt = `Eres el asistente de World Tour Coach, un sistema avanzado de entrenamiento de ciclismo para Manu (43 años, Master 40+).
 
@@ -728,49 +740,61 @@ INSTRUCCIONES:
       { role: 'user', content: prompt }
     ];
 
-    console.log('[OpenRouter] 📤 Enviando request a OpenRouter...');
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
-        'HTTP-Referer': 'https://worldtourcoach.com',
-        'X-Title': 'World Tour Coach'
-      },
-      body: JSON.stringify({
-        model: CONFIG.OPENROUTER.MODEL,
-        messages: messages,
-        max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
-        temperature: CONFIG.OPENROUTER.TEMPERATURE
-      })
-    });
+    // ─── PROBAR TODOS LOS MODELOS GRATUITOS HASTA QUE UNO FUNCIONE ───
+    const modelos = CONFIG.OPENROUTER.MODELS;
+    let errores = [];
 
-    console.log('[OpenRouter] 📥 Response status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.log('[OpenRouter] ❌ Error response:', response.status, errorText);
-      
-      // Si falla, intentar con el modelo fallback
-      if (CONFIG.OPENROUTER.FALLBACK_MODEL && CONFIG.OPENROUTER.MODEL !== CONFIG.OPENROUTER.FALLBACK_MODEL) {
-        console.log('[OpenRouter] Intentando con modelo fallback:', CONFIG.OPENROUTER.FALLBACK_MODEL);
-        return await chatConIAFallback(prompt, messages);
+    for (let i = 0; i < modelos.length; i++) {
+      const modelo = modelos[i];
+      try {
+        console.log(`[OpenRouter] 📤 Intentando modelo ${i+1}/${modelos.length}: ${modelo}`);
+        
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
+            'HTTP-Referer': 'https://worldtourcoach.com',
+            'X-Title': 'World Tour Coach'
+          },
+          body: JSON.stringify({
+            model: modelo,
+            messages: messages,
+            max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
+            temperature: CONFIG.OPENROUTER.TEMPERATURE
+          })
+        });
+
+        console.log(`[OpenRouter] 📥 Response status (${modelo}):`, response.status);
+
+        if (response.ok) {
+          const data = await response.json();
+          const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
+          console.log(`[OpenRouter] ✅ ¡ÉXITO con modelo: ${modelo}`);
+          
+          return {
+            success: true,
+            mensaje: respuesta,
+            modelo: modelo
+          };
+        } else {
+          const errorText = await response.text();
+          console.log(`[OpenRouter] ❌ Falló modelo ${modelo}: ${response.status}`);
+          errores.push(`${modelo}: ${response.status}`);
+          // Continuar con el siguiente modelo
+        }
+      } catch (modelError) {
+        console.log(`[OpenRouter] ❌ Error con modelo ${modelo}:`, modelError.message);
+        errores.push(`${modelo}: ${modelError.message}`);
+        // Continuar con el siguiente modelo
       }
-      
-      return {
-        success: false,
-        mensaje: `❌ Error al conectar con OpenRouter (${response.status})\n\nIntenta de nuevo en unos minutos.`
-      };
     }
 
-    const data = await response.json();
-    console.log('[OpenRouter] ✅ Response data:', JSON.stringify(data).substring(0, 200));
-    const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
-    
+    // Si todos los modelos fallaron
+    console.log('[OpenRouter] ❌ Todos los modelos fallaron');
     return {
-      success: true,
-      mensaje: respuesta,
-      modelo: CONFIG.OPENROUTER.MODEL
+      success: false,
+      mensaje: `❌ Todos los modelos de IA están saturados ahora mismo.\n\nSe probaron ${modelos.length} modelos y todos fallaron.\n\nIntenta de nuevo en unos minutos.`
     };
 
   } catch (error) {
@@ -778,53 +802,6 @@ INSTRUCCIONES:
     return {
       success: false,
       mensaje: `❌ Error: ${error.message}\n\nVerifica tu conexión e intenta de nuevo.`
-    };
-  }
-}
-
-async function chatConIAFallback(prompt, messages) {
-  try {
-    const messagesFallback = messages.map(msg => ({
-      ...msg,
-      content: msg.content
-    }));
-
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
-        'HTTP-Referer': 'https://worldtourcoach.com',
-        'X-Title': 'World Tour Coach'
-      },
-      body: JSON.stringify({
-        model: CONFIG.OPENROUTER.FALLBACK_MODEL,
-        messages: messagesFallback,
-        max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
-        temperature: CONFIG.OPENROUTER.TEMPERATURE
-      })
-    });
-
-    if (!response.ok) {
-      return {
-        success: false,
-        mensaje: '❌ Error con ambos modelos de IA.\n\nIntenta más tarde.'
-      };
-    }
-
-    const data = await response.json();
-    const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
-    
-    return {
-      success: true,
-      mensaje: respuesta,
-      modelo: CONFIG.OPENROUTER.FALLBACK_MODEL
-    };
-
-  } catch (error) {
-    return {
-      success: false,
-      mensaje: `❌ Error: ${error.message}`
     };
   }
 }
