@@ -129,6 +129,16 @@ const CONFIG = {
   CLIMA: {
     diasAclimatacion: 10,
     factorReduccionBase: 0.85
+  },
+  
+  // ─── OPENROUTER AI ───────────────────────────────────────────
+  OPENROUTER: {
+    API_KEY: process.env.OPENROUTER_API_KEY,
+    MODEL: 'anthropic/claude-3.5-sonnet', // Modelo por defecto
+    FALLBACK_MODEL: 'openai/gpt-4o-mini', // Modelo más barato como fallback
+    MAX_TOKENS: 2000,
+    TEMPERATURE: 0.7,
+    ENABLED: false // Se activa cuando hay API key configurada
   }
 };
 
@@ -667,6 +677,186 @@ function getDiasAclimatados() {
 
 function estaAclimatado() {
   return getDiasAclimatados() >= CONFIG.CLIMA.diasAclimatacion;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🤖 OPENROUTER AI - CHAT CON IA
+// ═══════════════════════════════════════════════════════════════
+
+async function chatConIA(prompt, contexto = '') {
+  try {
+    // Verificar si OpenRouter está configurado
+    if (!CONFIG.OPENROUTER.API_KEY) {
+      return {
+        success: false,
+        mensaje: '⚠️ OpenRouter no configurado.\n\nPara activar la IA:\n1. Obtén tu API key en https://openrouter.ai/keys\n2. Agrégala al archivo ENV: OPENROUTER_API_KEY=tu-key\n3. Reinicia el servidor'
+      };
+    }
+
+    // Activar OpenRouter si hay API key
+    CONFIG.OPENROUTER.ENABLED = true;
+
+    const systemPrompt = `Eres el asistente de World Tour Coach, un sistema avanzado de entrenamiento de ciclismo para Manu (43 años, Master 40+).
+
+CONTEXTO DEL SISTEMA:
+- Objetivo: Recuperar 296W de FTP (actual: ${CONFIG.FTP}W)
+- Fase actual: ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})
+- Edad: ${CONFIG.AGE_YEARS} años
+- Peso: ${CONFIG.WEIGHT_KG}kg
+- FTP: ${CONFIG.FTP}W
+
+CAPACIDADES:
+- Periodización de entrenamiento (Base, Desarrollo, Especificidad, Taper)
+- Nutrición avanzada para ciclistas
+- Análisis de fatiga y recuperación
+- Planificación de fuerza y movilidad
+- Adaptación al clima (Heat Index)
+
+INSTRUCCIONES:
+- Responde en español, de forma concisa y práctica
+- Usa emojis para hacer los mensajes más claros
+- Si no tienes información suficiente, pide más detalles
+- Enfócate en consejos prácticos y accionables
+- Considera que es Master 40+ (recuperación más lenta)
+- Máximo 500 caracteres por respuesta`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...(contexto ? [{ role: 'assistant', content: contexto }] : []),
+      { role: 'user', content: prompt }
+    ];
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
+        'HTTP-Referer': 'https://worldtourcoach.com',
+        'X-Title': 'World Tour Coach'
+      },
+      body: JSON.stringify({
+        model: CONFIG.OPENROUTER.MODEL,
+        messages: messages,
+        max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
+        temperature: CONFIG.OPENROUTER.TEMPERATURE
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log('[OpenRouter] Error:', response.status, errorText);
+      
+      // Si falla, intentar con el modelo fallback
+      if (CONFIG.OPENROUTER.FALLBACK_MODEL && CONFIG.OPENROUTER.MODEL !== CONFIG.OPENROUTER.FALLBACK_MODEL) {
+        console.log('[OpenRouter] Intentando con modelo fallback:', CONFIG.OPENROUTER.FALLBACK_MODEL);
+        return await chatConIAFallback(prompt, messages);
+      }
+      
+      return {
+        success: false,
+        mensaje: `❌ Error al conectar con OpenRouter (${response.status})\n\nIntenta de nuevo en unos minutos.`
+      };
+    }
+
+    const data = await response.json();
+    const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
+    
+    return {
+      success: true,
+      mensaje: respuesta,
+      modelo: CONFIG.OPENROUTER.MODEL
+    };
+
+  } catch (error) {
+    console.log('[OpenRouter] ERROR:', error);
+    return {
+      success: false,
+      mensaje: `❌ Error: ${error.message}\n\nVerifica tu conexión e intenta de nuevo.`
+    };
+  }
+}
+
+async function chatConIAFallback(prompt, messages) {
+  try {
+    const messagesFallback = messages.map(msg => ({
+      ...msg,
+      content: msg.content
+    }));
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
+        'HTTP-Referer': 'https://worldtourcoach.com',
+        'X-Title': 'World Tour Coach'
+      },
+      body: JSON.stringify({
+        model: CONFIG.OPENROUTER.FALLBACK_MODEL,
+        messages: messagesFallback,
+        max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
+        temperature: CONFIG.OPENROUTER.TEMPERATURE
+      })
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        mensaje: '❌ Error con ambos modelos de IA.\n\nIntenta más tarde.'
+      };
+    }
+
+    const data = await response.json();
+    const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
+    
+    return {
+      success: true,
+      mensaje: respuesta,
+      modelo: CONFIG.OPENROUTER.FALLBACK_MODEL
+    };
+
+  } catch (error) {
+    return {
+      success: false,
+      mensaje: `❌ Error: ${error.message}`
+    };
+  }
+}
+
+// ─── COMANDO IA ───────────────────────────────────────────────
+async function cmdIA(args) {
+  try {
+    const prompt = args.join(' ');
+    
+    if (!prompt || prompt.length === 0) {
+      await sendTelegram(`🤖 *WORLD TOUR COACH - ASISTENTE IA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`);
+      await sendTelegram(`Escribe tu pregunta sobre entrenamiento, nutrición, recuperación o cualquier tema de ciclismo.\n\n`);
+      await sendTelegram(`*Ejemplos:*\n• /ia ¿Cómo debo alimentarme antes de una salida de 3h?\n• /ia ¿Es mejor entrenar por la mañana o por la tarde?\n• /ia Tengo fatiga acumulada, ¿qué hago?\n• /ia ¿Cómo mejoro mi recuperación?\n\n`);
+      await sendTelegram(`💡 *Consejo:* Sé específico en tu pregunta para obtener mejores respuestas.`);
+      return;
+    }
+
+    await sendTelegram('🤔 *Pensando...*\nConsultando a la IA...');
+
+    const resultado = await chatConIA(prompt);
+    
+    if (resultado.success) {
+      let msg = `🤖 *RESPUESTA IA*\n`;
+      msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      msg += resultado.mensaje;
+      msg += '\n\n';
+      if (resultado.modelo) {
+        msg += `_Modelo: ${resultado.modelo}_`;
+      }
+      await sendTelegramLong(msg);
+    } else {
+      await sendTelegram(resultado.mensaje);
+    }
+
+  } catch (error) {
+    console.log('[cmdIA] ERROR:', error);
+    await sendTelegram(`❌ Error al procesar tu pregunta: ${error.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6019,6 +6209,7 @@ app.post('/webhook', async (req, res) => {
       case '/traza': await cmdTraza(); break;
       case '/movilidad': await cmdMovilidad(); break;
       case '/sync': await cmdSync(); break;   // ← NUEVO COMANDO
+      case '/ia': await cmdIA(args); break;   // ← ASISTENTE IA CON OPENROUTER
       
       default:
         await sendTelegram('Comando no reconocido.\nEscribe /start para ver el menu.');
