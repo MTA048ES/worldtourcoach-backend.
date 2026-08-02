@@ -804,14 +804,16 @@ INSTRUCCIONES:
 
     // ─── PROBAR TODOS LOS MODELOS GRATUITOS HASTA QUE UNO FUNCIONE ───
     const modelos = CONFIG.OPENROUTER.MODELS;
+    const maxModelos = Math.min(5, modelos.length);
     let errores = [];
 
-    for (let i = 0; i < modelos.length; i++) {
+    for (let i = 0; i < maxModelos; i++) {
       const modelo = modelos[i];
       try {
-        console.log(`[OpenRouter] 📤 Intentando modelo ${i+1}/${modelos.length}: ${modelo}`);
+        console.log(`[OpenRouter] 📤 Intentando modelo ${i+1}/${maxModelos}: ${modelo}`);
         
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const fetchWithTimeout = Promise.race([
+          fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -826,6 +828,7 @@ INSTRUCCIONES:
             temperature: CONFIG.OPENROUTER.TEMPERATURE
           })
         });
+        const response = await fetchWithTimeout;
 
         console.log(`[OpenRouter] 📥 Response status (${modelo}):`, response.status);
 
@@ -856,7 +859,7 @@ INSTRUCCIONES:
     console.log('[OpenRouter] ❌ Todos los modelos fallaron');
     return {
       success: false,
-      mensaje: `❌ Todos los modelos de IA están saturados ahora mismo.\n\nSe probaron ${modelos.length} modelos y todos fallaron.\n\nIntenta de nuevo en unos minutos.`
+      mensaje: `❌ Todos los modelos de IA están saturados ahora mismo.\n\nSe probaron ${maxModelos} modelos y todos fallaron.\n\nIntenta de nuevo en unos minutos.`
     };
 
   } catch (error) {
@@ -6260,7 +6263,10 @@ app.post('/webhook', async (req, res) => {
       case '/traza': await cmdTraza(); break;
       case '/movilidad': await cmdMovilidad(); break;
       case '/sync': await cmdSync(); break;   // ← NUEVO COMANDO
-      case '/ia': await cmdIA(args); break;   // ← ASISTENTE IA CON OPENROUTER
+      case '/ia': 
+        // Procesar IA en segundo plano para no bloquear el webhook
+        setImmediate(() => cmdIA(args).catch(err => console.log('[cmdIA bg]', err)));
+        break;
       
       default:
         await sendTelegram('Comando no reconocido.\nEscribe /start para ver el menu.');
