@@ -687,6 +687,7 @@ async function chatConIA(prompt, contexto = '') {
   try {
     // Verificar si OpenRouter está configurado
     if (!CONFIG.OPENROUTER.API_KEY) {
+      console.log('[OpenRouter] ❌ API_KEY no configurada en CONFIG');
       return {
         success: false,
         mensaje: '⚠️ OpenRouter no configurado.\n\nPara activar la IA:\n1. Obtén tu API key en https://openrouter.ai/keys\n2. Agrégala al archivo ENV: OPENROUTER_API_KEY=tu-key\n3. Reinicia el servidor'
@@ -695,6 +696,7 @@ async function chatConIA(prompt, contexto = '') {
 
     // Activar OpenRouter si hay API key
     CONFIG.OPENROUTER.ENABLED = true;
+    console.log('[OpenRouter] ✅ API_KEY detectada, modelo:', CONFIG.OPENROUTER.MODEL);
 
     const systemPrompt = `Eres el asistente de World Tour Coach, un sistema avanzado de entrenamiento de ciclismo para Manu (43 años, Master 40+).
 
@@ -726,6 +728,7 @@ INSTRUCCIONES:
       { role: 'user', content: prompt }
     ];
 
+    console.log('[OpenRouter] 📤 Enviando request a OpenRouter...');
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -742,9 +745,11 @@ INSTRUCCIONES:
       })
     });
 
+    console.log('[OpenRouter] 📥 Response status:', response.status);
+    
     if (!response.ok) {
       const errorText = await response.text();
-      console.log('[OpenRouter] Error:', response.status, errorText);
+      console.log('[OpenRouter] ❌ Error response:', response.status, errorText);
       
       // Si falla, intentar con el modelo fallback
       if (CONFIG.OPENROUTER.FALLBACK_MODEL && CONFIG.OPENROUTER.MODEL !== CONFIG.OPENROUTER.FALLBACK_MODEL) {
@@ -759,6 +764,7 @@ INSTRUCCIONES:
     }
 
     const data = await response.json();
+    console.log('[OpenRouter] ✅ Response data:', JSON.stringify(data).substring(0, 200));
     const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
     
     return {
