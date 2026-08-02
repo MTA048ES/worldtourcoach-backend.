@@ -698,8 +698,20 @@ function estaAclimatado() {
 // 🤖 OPENROUTER AI - CHAT CON IA
 // ═══════════════════════════════════════════════════════════════
 
+// Cache simple para consultas repetidas
+const cacheIA = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
 async function chatConIA(prompt, contexto = '') {
   try {
+    // Verificar cache primero
+    const cacheKey = prompt.trim().toLowerCase();
+    const cached = cacheIA.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      console.log('[OpenRouter] 📦 Respuesta desde cache');
+      return cached.result;
+    }
+
     // Verificar si OpenRouter está configurado
     if (!CONFIG.OPENROUTER.API_KEY) {
       console.log('[OpenRouter] ❌ API_KEY no configurada en CONFIG');
@@ -839,11 +851,25 @@ INSTRUCCIONES:
           const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
           console.log(`[OpenRouter] ✅ ¡ÉXITO con modelo: ${modelo}`);
           
-          return {
+          const result = {
             success: true,
             mensaje: respuesta,
             modelo: modelo
           };
+          
+          // Guardar en cache
+          cacheIA.set(cacheKey, {
+            timestamp: Date.now(),
+            result: result
+          });
+          
+          // Limitar tamaño del cache (50 entradas)
+          if (cacheIA.size > 50) {
+            const firstKey = cacheIA.keys().next().value;
+            cacheIA.delete(firstKey);
+          }
+          
+          return result;
         } else {
           const errorText = await response.text();
           console.log(`[OpenRouter] ❌ Falló modelo ${modelo}: ${response.status}`);
