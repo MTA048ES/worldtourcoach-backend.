@@ -6185,18 +6185,71 @@ function calcularReadinessConTendencia(estado, historial) {
 // 🌐 WEBHOOK Y RUTAS API
 // ═══════════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════
+// 🚦 SISTEMA DE COLA Y DEDUPLICACIÓN
+// ═══════════════════════════════════════════════════════════════
+let procesandoMensaje = false;
+let colaMensajes = [];
+let updateIdProcesando = null;
+
+async function procesarSiguienteMensaje() {
+  if (procesandoMensaje || colaMensajes.length === 0) {
+    return;
+  }
+  
+  procesandoMensaje = true;
+  const { body, res } = colaMensajes.shift();
+  
+  try {
+    await procesarWebhook(body, res);
+  } catch (err) {
+    console.log('[Cola] ERROR:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  } finally {
+    procesandoMensaje = false;
+    updateIdProcesando = null;
+    // Procesar siguiente mensaje en cola
+    setImmediate(() => procesarSiguienteMensaje());
+  }
+}
+
+function encolarMensaje(body, res) {
+  const updateId = body.update_id;
+  
+  // Si ya estamos procesando este update, ignorar
+  if (updateIdProcesando === updateId) {
+    console.log('[Cola] ⚠️ Update duplicado ignorado:', updateId);
+    res.status(200).json({ ok: true, message: 'duplicate' });
+    return false;
+  }
+  
+  // Agregar a cola
+  colaMensajes.push({ body, res });
+  console.log('[Cola] 📥 Mensaje encolado. Total en cola:', colaMensajes.length);
+  
+  // Si no hay nada procesando, iniciar
+  if (!procesandoMensaje) {
+    procesarSiguienteMensaje();
+  }
+  
+  return true;
+}
+
 app.post('/webhook', async (req, res) => {
   try {
     const body = req.body;
     
-    // ─── DEDUPLICACIÓN: NO PROCESAR EL MISMO UPDATE DOS VECES ────
-    const updateId = body.update_id;
-    if (updateId && getProperty('ultimo_update_id') === updateId) {
-      return res.status(200).json({ ok: true });
+    // ─── USAR SISTEMA DE COLA ────────────────────────────────────
+    const encolado = encolarMensaje(body, res);
+    if (!encolado) {
+      return;
     }
-    if (updateId) {
-      setProperty('ultimo_update_id', updateId);
-    }
+    
+    // No continuar aquí - el procesamiento se hace en procesarSiguienteMensaje()
+    return;
     
     const message = body.message || body.edited_message || body.channel_post;
     if (!message) return res.status(200).json({ ok: true });
@@ -6211,7 +6264,8 @@ app.post('/webhook', async (req, res) => {
     if (!rawText) return res.status(200).json({ ok: true });
     console.log('[Webhook] Mensaje:', rawText);
 
-    // ─── VERIFICAR SI HAY ANÁLISIS DE DESVIACIÓN PENDIENTE ─────────
+async function procesarWebhook(body, res) {
+  try {
     const esperandoDesviacion = getUserProperty('esperando_respuesta_desviacion');
     if (esperandoDesviacion === 'true') {
       const procesado = await procesarRespuestaDesviacion(rawText);
@@ -6303,9 +6357,11 @@ app.post('/webhook', async (req, res) => {
     res.status(200).json({ ok: true });
   } catch (err) {
     console.log('[Webhook] ERROR:', err);
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+};
 
 // ─── RUTAS API ───
 app.get('/api/estado', async (req, res) => {
