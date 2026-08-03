@@ -2899,7 +2899,8 @@ async function getAthleteState() {
     registrarInputTraza(traza, 'fecha', new Date().toISOString(), 'Fecha del estado');
     console.log('[getAthleteState] 2. Datos OK. Calculando estado...');
 
-    const estado = calcularEstadoSistema(datos);
+    const estado = await calcularEstadoSistema(datos);
+    console.log('[DEBUG getAthleteState] calcularEstadoSistema:', estado ? '✅' : '❌', estado ? `tsb=${estado.tsb}, readiness=${estado.readiness}` : 'null');
     if (!estado || typeof estado !== 'object') {
       console.log('[getAthleteState] ❌ estado inválido');
       return null;
@@ -2972,6 +2973,7 @@ async function getAthleteState() {
 
     const nutricion = calcularNutricionUnificada(estado, entreno);
     const fuerza = calcularFuerzaUnificada(estado);
+    console.log('[DEBUG getAthleteState] fuerza:', fuerza ? '✅' : '❌', fuerza ? `nivel=${fuerza.nivel}, ejercicios=${fuerza.ejercicios.length}` : 'null');
     const consejo = generarConsejoUnificado(estado, decision, restricciones);
 
     const stats = getEstadisticasAgregadas();
@@ -5076,7 +5078,9 @@ async function cmdNutricion() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdFuerza() {
+  console.log('[DEBUG cmdFuerza] Iniciando...');
   const state = await getAthleteStateConAjuste();
+  console.log('[DEBUG cmdFuerza] state:', state ? '✅' : '❌', state ? `fuerza=${state.fuerza ? 'presente' : 'AUSENTE'}` : 'null');
   if (!state) { await sendTelegram('Sin datos.'); return; }
   const f = state.fuerza;
   let msg = '🏋️ *RUTINA DE FUERZA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
