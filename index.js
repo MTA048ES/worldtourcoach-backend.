@@ -1178,34 +1178,124 @@ async function fetchWeatherSafe() {
   try { return await fetchWeather(); } catch(e) { return null; }
 }
 
+// ─── GARMIN: OBTENER DATOS DE SUPABASE ──────────────────────────
+async function obtenerDatosGarminSupabase() {
+  try {
+    const { data: wellness, error: errWellness } = await supabase
+      .from('garmin_wellness')
+      .select('*')
+      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .order('date', { ascending: false })
+      .limit(1);
+    
+    if (errWellness) {
+      console.log('[Garmin] Error consultando wellness:', errWellness.message);
+      return null;
+    }
+    
+    if (!wellness || wellness.length === 0) {
+      console.log('[Garmin] No hay datos de wellness en Supabase');
+      return null;
+    }
+    
+    const g = wellness[0];
+    
+    // Consultar HRV de Garmin
+    const { data: hrvData } = await supabase
+      .from('garmin_hrv')
+      .select('*')
+      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .eq('date', g.date)
+      .limit(1);
+    
+    // Consultar sueño de Garmin
+    const { data: sleepData } = await supabase
+      .from('garmin_sleep')
+      .select('*')
+      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .eq('date', g.date)
+      .limit(1);
+    
+    // Construir objeto today compatible
+    const sleepScore = g.sleep_score || (sleepData && sleepData.length > 0 ? sleepData[0].sleep_score : null);
+    const today = {
+      hrv: g.hrv_last_night || g.hrv_weekly || 50,
+      sleepQuality: sleepScore >= 80 ? 3 : sleepScore >= 60 ? 2 : 1,
+      steps: g.total_steps || 0,
+      stepsCount: g.total_steps || 0,
+      bodyBattery: g.body_battery,
+      bodyBatteryMax: g.body_battery_max,
+      bodyBatteryMin: g.body_battery_min,
+      stressAvg: g.stress_avg,
+      stressMax: g.stress_max,
+      restingHR: g.resting_hr,
+      maxHR: g.max_hr,
+      minHR: g.min_hr,
+      avgSpo2: g.avg_spo2,
+      avgRespiration: g.avg_respiration,
+      sleepSeconds: g.sleep_seconds,
+      deepSleepSeconds: g.deep_sleep_seconds,
+      lightSleepSeconds: g.light_sleep_seconds,
+      remSleepSeconds: g.rem_sleep_seconds,
+      awakeSleepSeconds: g.awake_sleep_seconds,
+      sleepScore: sleepScore,
+      hrvWeekly: g.hrv_weekly,
+      hrvLastNight: g.hrv_last_night,
+      date: g.date,
+      fuente: 'garmin'
+    };
+    
+    return {
+      today,
+      garminData: g,
+      hrvData: hrvData && hrvData.length > 0 ? hrvData[0] : null,
+      sleepData: sleepData && sleepData.length > 0 ? sleepData[0] : null
+    };
+  } catch (err) {
+    console.log('[Garmin] Error:', err.message);
+    return null;
+  }
+}
+
 async function fetchActivitiesSafe(limit) {
   try { return await fetchActivities(limit); } catch(e) { console.log('[fetchActivitiesSafe] Error:', e.message); return []; }
 }
 
 async function obtenerDatosCompletos() {
   try {
-    console.log('[obtenerDatosCompletos] 1. Obteniendo wellness...');
+    console.log('[obtenerDatosCompletos] 1. Intentando datos Garmin de Supabase...');
+
+    // PRIMERO: Intentar obtener datos de Garmin (Body Battery, estrés, SpO2, sueño real)
+    const garminData = await obtenerDatosGarminSupabase();
+
+    // SEGUNDO: Obtener datos de Intervals (para CTL/ATL/TSB y actividades)
+    console.log('[obtenerDatosCompletos] 2. Obteniendo wellness de Intervals...');
     const wellness = await fetchWellnessSafe(7);
-    const today = (wellness && wellness.length > 0) ? wellness[wellness.length - 1] : null;
-    console.log('[obtenerDatosCompletos] 2. Wellness OK. today:', today ? '✅' : '❌ null');
-    
+    const intervalsToday = (wellness && wellness.length > 0) ? wellness[wellness.length - 1] : null;
+
     console.log('[obtenerDatosCompletos] 3. Obteniendo actividades...');
     const activities = await fetchActivitiesSafe(28);
     console.log('[obtenerDatosCompletos] 4. Actividades OK:', activities.length);
-    
+
     console.log('[obtenerDatosCompletos] 5. Obteniendo clima...');
     const weather = await fetchWeatherSafe();
     console.log('[obtenerDatosCompletos] 6. Clima OK:', weather ? '✅' : '❌ null');
-    
-    const pasos = today ? safeNum(today.steps) || safeNum(today.stepsCount) || 0 : 0;
-    const sueño = today ? safeNum(today.sleepQuality) || 2 : 2;
-    const hrv = today ? safeNum(today.hrv) || 50 : 50;
 
-    const ctl = today ? safeNum(today.ctl, 50) : 50;
-    const atl = today ? safeNum(today.atl, 50) : 50;
+    // ─── COMBINAR DATOS: Garmin + Intervals ───
+    // Si hay datos Garmin, usar sus valores de salud (más precisos)
+    // Si no, usar los de Intervals (fallback)
+    const today = garminData ? garminData.today : intervalsToday;
+
+    const pasos = today ? (safeNum(today.steps) || safeNum(today.stepsCount) || 0) : 0;
+    const sueño = today ? (safeNum(today.sleepQuality) || 2) : 2;
+    const hrv = today ? (safeNum(today.hrv) || 50) : 50;
+
+    // CTL/ATL/TSB siempre de Intervals (Garmin no los calcula)
+    const ctl = intervalsToday ? safeNum(intervalsToday.ctl, 50) : 50;
+    const atl = intervalsToday ? safeNum(intervalsToday.atl, 50) : 50;
     const tsb = ctl - atl;
-    
-    console.log('[obtenerDatosCompletos] 7. Datos calculados. CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
+
+    console.log('[obtenerDatosCompletos] 7. Datos calculados. Fuente:', garminData ? 'GARMIN' : 'INTERVALS', '| CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
 
     return {
       wellness,
@@ -1217,7 +1307,28 @@ async function obtenerDatosCompletos() {
       hrv,
       ctl,
       atl,
-      tsb
+      tsb,
+      garmin: garminData ? {
+        bodyBattery: garminData.today.bodyBattery,
+        bodyBatteryMax: garminData.today.bodyBatteryMax,
+        bodyBatteryMin: garminData.today.bodyBatteryMin,
+        stressAvg: garminData.today.stressAvg,
+        stressMax: garminData.today.stressMax,
+        restingHR: garminData.today.restingHR,
+        maxHR: garminData.today.maxHR,
+        minHR: garminData.today.minHR,
+        avgSpo2: garminData.today.avgSpo2,
+        avgRespiration: garminData.today.avgRespiration,
+        sleepSeconds: garminData.today.sleepSeconds,
+        deepSleepSeconds: garminData.today.deepSleepSeconds,
+        lightSleepSeconds: garminData.today.lightSleepSeconds,
+        remSleepSeconds: garminData.today.remSleepSeconds,
+        awakeSleepSeconds: garminData.today.awakeSleepSeconds,
+        sleepScore: garminData.today.sleepScore,
+        hrvLastNight: garminData.today.hrvLastNight,
+        hrvWeekly: garminData.today.hrvWeekly,
+        date: garminData.today.date
+      } : null
     };
   } catch (err) {
     console.log('[obtenerDatosCompletos] ERROR:', err.toString());
@@ -3235,6 +3346,22 @@ async function cmdHoy(chatId) {
     msg += `• Pasos: ${e.pasos.toLocaleString()}\n`;
     if (e.acwr > 1.3) msg += `• ⚠️ ACWR: ${e.acwr.toFixed(2)} (ALTO)\n`;
     msg += '\n';
+
+    // ─── DATOS GARMIN (datos reales del reloj) ───
+    if (state.datos && state.datos.garmin) {
+      const g = state.datos.garmin;
+      msg += '*🔋 GARMIN (datos reales)*\n';
+      if (g.date) msg += `• 📅 Fecha: ${g.date}\n`;
+      if (g.bodyBattery !== null && g.bodyBattery !== undefined) msg += `• Body Battery: *${g.bodyBattery}%* ${g.bodyBattery < 30 ? '🔴' : g.bodyBattery < 50 ? '🟡' : '🟢'}\n`;
+      if (g.stressAvg !== null && g.stressAvg !== undefined) msg += `• Estrés: *${g.stressAvg}* ${g.stressAvg > 70 ? '🔴' : g.stressAvg > 50 ? '🟡' : '🟢'}\n`;
+      if (g.sleepScore !== null && g.sleepScore !== undefined) msg += `• Score sueño: *${g.sleepScore}* ${g.sleepScore >= 80 ? '🟢' : g.sleepScore >= 60 ? '🟡' : '🔴'}\n`;
+      if (g.deepSleepSeconds !== null && g.deepSleepSeconds !== undefined && g.deepSleepSeconds > 0) msg += `• Sueño profundo: *${(g.deepSleepSeconds / 3600).toFixed(1)}h*\n`;
+      if (g.remSleepSeconds !== null && g.remSleepSeconds !== undefined && g.remSleepSeconds > 0) msg += `• Sueño REM: *${(g.remSleepSeconds / 3600).toFixed(1)}h*\n`;
+      if (g.restingHR !== null && g.restingHR !== undefined) msg += `• HR reposo: *${g.restingHR} bpm*\n`;
+      if (g.avgSpo2 !== null && g.avgSpo2 !== undefined) msg += `• SpO2: *${g.avgSpo2}%*\n`;
+      if (g.hrvLastNight !== null && g.hrvLastNight !== undefined) msg += `• HRV nocturno: *${g.hrvLastNight} ms*\n`;
+      msg += '\n';
+    }
 
     if (state.ftpEstimado) {
       const diff = CONFIG.FTP_HISTORICO.valor - state.ftpEstimado;
