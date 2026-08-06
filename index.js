@@ -164,8 +164,12 @@ console.log('🌍 CIUDAD:', CONFIG.CITY);
 console.log('📅 FASE:', CONFIG.PERIODO.fase.toUpperCase(), '| Semana', CONFIG.PERIODO.semana);
 
 // ─── SUPABASE ───
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://qhtwueashkqbqytfwpwi.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_mPhJsgW-V7n6TJs6-RLoWQ_Qk68d5qQ';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('❌ FATAL: SUPABASE_URL y SUPABASE_ANON_KEY son obligatorias en las variables de entorno');
+  process.exit(1);
+}
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ═══════════════════════════════════════════════════════════════
