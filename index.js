@@ -3267,10 +3267,60 @@ function calcularResultadoFeedback(feedback) {
 // 📋 TODOS LOS COMANDOS
 // ═══════════════════════════════════════════════════════════════
 
-async function cmdStart(chatId) {
-  // /start muestra el resumen COMPLETO de /hoy (una sola vez)
-  // Todas las funciones y subcomandos siguen disponibles.
-  await cmdHoy(chatId);
+async function cmdStart() {
+  const fase = getFaseActual();
+  const semana = getSemanaActual();
+  const ftpEstimado = calcularFTPEstimado();
+  const proy = calcularProyeccionObjetivo();
+  
+  const msg = `🌍 *WORLD TOUR COACH v9.5 - DEFINITIVO*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Hola Manu. Sistema unificado con periodización real.
+🎯 Objetivo: Recuperar ${CONFIG.FTP_HISTORICO.valor}W
+
+📅 ESTADO ACTUAL
+• Fase: ${getNombreFase()} (Semana ${semana}/${getSemanasFase()})
+• FTP estimado: ${ftpEstimado}W
+• ${proy.mensaje}
+
+📋 COMANDOS PRINCIPALES
+/hoy - Resumen COMPLETO del día ⭐
+/hoy --estado - Estado completo
+/hoy --plan - Plan detallado
+/hoy --clima - Clima + adaptación
+/hoy --nutricion - Nutrición + recetas
+/hoy --objetivo - Plan para 296W
+/nutricion - Nutrición detallada + recetas ⭐
+
+🧠 COMANDOS AVANZADOS
+/traza - Ver última decisión
+/analizar - Análisis de entreno (último o con ID)
+/fatiga - Análisis de fatiga
+/alerta - Detección de sobreentrenamiento
+/semana - Resumen semanal
+/semanapasada - Resumen semana anterior
+/aprender - Qué he aprendido
+/aprendervalidar - Validación del aprendizaje
+/progreso - Evolución anual
+/prediccion - Rendimiento esperado
+/recuperacion - Tiempos de recuperación
+/tendencias - Evolución 90 días
+/historial - Historial de entrenos
+
+🛠️ HERRAMIENTAS
+/zwo - Archivo rodillo (con cadencia)
+/garmin - Subir a Intervals
+/exportar - Exportar datos
+/densidad - Densidad de carga
+/debug - Datos técnicos
+/movilidad - Rutina de movilidad diaria
+/sync - Sincronizar con Supabase ⭐ NUEVO
+
+FTP: ${CONFIG.FTP}W | Peso: ${CONFIG.WEIGHT_KG}kg | Edad: ${CONFIG.AGE_YEARS} años
+🧠 v9.5: Periodización + Predicción FTP + Nutrición avanzada + Movilidad`;
+
+  await sendTelegram(msg);
 }
 
 async function cmdHoy(chatId) {
@@ -6513,7 +6563,7 @@ async function procesarWebhook(body, res) {
 
     // ─── SWITCH DE COMANDOS CON ALIAS ──────────────────────────────
     switch (cmd) {
-      case '/start': await cmdStart(chatId); break;
+      case '/start': await cmdStart(); break;
       case '/plan': await cmdPlan(); break;
       case '/estado': await cmdEstado(); break;
       case '/analizar': await cmdAnalizar(args); break;
