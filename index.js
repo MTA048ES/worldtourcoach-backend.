@@ -276,6 +276,8 @@ async function cargarHistorialCompleto() {
         const np = safeNum(act.np, 0);
         const tss = safeNum(act.tss, 0);
         const ifVal = (act.if_value && act.if_value > 0) ? act.if_value : (np > 0 ? np / CONFIG.FTP : 0);
+        const durSeg = safeNum(act.moving_time, 0) || safeNum(act.elapsed_time, 0);
+        const durMin = durSeg > 0 ? Math.round(durSeg / 60) : 0;
         historial.push({
           fecha: act.Fecha || new Date().toISOString(),
           entreno: {
@@ -283,7 +285,8 @@ async function cargarHistorialCompleto() {
             tss: tss,
             np: np,
             intensidad: ifVal,
-            durMin: 0
+            durMin: durMin,
+            duracionTotalMin: durMin
           },
           feedback: { rpe: 5, watts: 'si', piernas: 2, stress: 2, sleep: 2 },
           resultado: 70,
@@ -371,6 +374,7 @@ async function guardarActividadSupabase(actividad) {
       kj: Number(actividad.icu_kilojoules || actividad.kilojoules || 0),
       Distancia: Number(actividad.distance || 0),
       elevacion: Number(actividad.elevation_gain || 0),
+      moving_time: Number(actividad.moving_time || actividad.elapsed_time || 0),
       user_id: CONFIG.CHAT_ID || 'default'
     };
     
@@ -3262,60 +3266,10 @@ function calcularResultadoFeedback(feedback) {
 // 📋 TODOS LOS COMANDOS
 // ═══════════════════════════════════════════════════════════════
 
-async function cmdStart() {
-  const fase = getFaseActual();
-  const semana = getSemanaActual();
-  const ftpEstimado = calcularFTPEstimado();
-  const proy = calcularProyeccionObjetivo();
-  
-  const msg = `🌍 *WORLD TOUR COACH v9.5 - DEFINITIVO*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Hola Manu. Sistema unificado con periodización real.
-🎯 Objetivo: Recuperar ${CONFIG.FTP_HISTORICO.valor}W
-
-📅 ESTADO ACTUAL
-• Fase: ${getNombreFase()} (Semana ${semana}/${getSemanasFase()})
-• FTP estimado: ${ftpEstimado}W
-• ${proy.mensaje}
-
-📋 COMANDOS PRINCIPALES
-/hoy - Resumen COMPLETO del día ⭐
-/hoy --estado - Estado completo
-/hoy --plan - Plan detallado
-/hoy --clima - Clima + adaptación
-/hoy --nutricion - Nutrición + recetas
-/hoy --objetivo - Plan para 296W
-/nutricion - Nutrición detallada + recetas ⭐
-
-🧠 COMANDOS AVANZADOS
-/traza - Ver última decisión
-/analizar - Análisis de entreno (último o con ID)
-/fatiga - Análisis de fatiga
-/alerta - Detección de sobreentrenamiento
-/semana - Resumen semanal
-/semanapasada - Resumen semana anterior
-/aprender - Qué he aprendido
-/aprendervalidar - Validación del aprendizaje
-/progreso - Evolución anual
-/prediccion - Rendimiento esperado
-/recuperacion - Tiempos de recuperación
-/tendencias - Evolución 90 días
-/historial - Historial de entrenos
-
-🛠️ HERRAMIENTAS
-/zwo - Archivo rodillo (con cadencia)
-/garmin - Subir a Intervals
-/exportar - Exportar datos
-/densidad - Densidad de carga
-/debug - Datos técnicos
-/movilidad - Rutina de movilidad diaria
-/sync - Sincronizar con Supabase ⭐ NUEVO
-
-FTP: ${CONFIG.FTP}W | Peso: ${CONFIG.WEIGHT_KG}kg | Edad: ${CONFIG.AGE_YEARS} años
-🧠 v9.5: Periodización + Predicción FTP + Nutrición avanzada + Movilidad`;
-
-  await sendTelegram(msg);
+async function cmdStart(chatId) {
+  // /start muestra el resumen COMPLETO de /hoy (una sola vez)
+  // Todas las funciones y subcomandos siguen disponibles.
+  await cmdHoy(chatId);
 }
 
 async function cmdHoy(chatId) {
@@ -4879,7 +4833,8 @@ async function cmdDensidad() {
   
   ultimos.forEach(h => {
     tssTotal += h.entreno?.tss || 0;
-    horasTotal += (h.entreno?.durMin || 0) / 60;
+    const durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
+    horasTotal += durMin / 60;
   });
   
   const densidad = horasTotal > 0 ? tssTotal / horasTotal : 0;
@@ -6547,7 +6502,7 @@ async function procesarWebhook(body, res) {
 
     // ─── SWITCH DE COMANDOS CON ALIAS ──────────────────────────────
     switch (cmd) {
-      case '/start': await cmdStart(); break;
+      case '/start': await cmdStart(chatId); break;
       case '/plan': await cmdPlan(); break;
       case '/estado': await cmdEstado(); break;
       case '/analizar': await cmdAnalizar(args); break;
