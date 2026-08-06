@@ -306,6 +306,7 @@ async function cargarHistorialCompleto() {
             tss: ent.tss || 0,
             intensidad: ent.intensidad || 0,
             durMin: ent.durmin || 0,
+            duracionTotalMin: ent.durmin || 0,
             reps: ent.reps || 0
           },
           feedback: {
@@ -4833,9 +4834,19 @@ async function cmdDensidad() {
   
   ultimos.forEach(h => {
     tssTotal += h.entreno?.tss || 0;
-    const durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
+    // Intentar obtener duración de varias fuentes
+    let durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
+    // Si no hay duración pero hay TSS, estimar ~1h por sesión (65 TSS/hora en Z2)
+    if (durMin <= 0 && (h.entreno?.tss || 0) > 0) {
+      durMin = 60;
+    }
     horasTotal += durMin / 60;
   });
+  
+  // Si aún no hay horas, usar estimación basada en TSS (65 TSS/hora aprox)
+  if (horasTotal <= 0 && tssTotal > 0) {
+    horasTotal = tssTotal / 65;
+  }
   
   const densidad = horasTotal > 0 ? tssTotal / horasTotal : 0;
   const tssPorSemana = ultimos.length > 0 ? (tssTotal / ultimos.length) * 7 : 0;
