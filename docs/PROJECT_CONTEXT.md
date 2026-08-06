@@ -362,15 +362,84 @@ index.js (crítico - TODO el sistema)
 
 ---
 
-## DUDAS Y PUNTOS NO DEDUCIBLES
+## DUDAS Y PUNTOS NO DEDUCIBLES — RESPUESTAS DEL CREADOR
 
-1. **¿Cuál es el objetivo deportivo exacto?** — Se deduce que es recuperar 296W de FTP, pero no sé si hay otros objetivos.
-2. **¿Por qué FTP 240W?** — No puedo deducir la historia detrás de este valor.
-3. **¿Cuál es la frecuencia de entrenamiento semanal esperada?** — El sistema sugiere 3-5 sesiones, pero no sé la realidad.
-4. **¿Hay algún plan de competición?** — No puedo deducir si hay carreras objetivo.
-5. **¿Cuál es la relación con la grupeta?** — El sistema la trata como válida, pero no sé la frecuencia real.
-6. **¿Hay preferencias de horario?** — El sistema detecta patrones, pero no sé si hay preferencia explícita.
-7. **¿Cuál es la historia del proyecto?** — No puedo deducir por qué se creó ni su evolución.
-8. **¿Hay limitaciones físicas?** — No puedo deducir si hay lesiones o limitaciones.
-9. **¿Cuál es el presupuesto?** — No puedo deducir si hay límites en servicios pagados.
-10. **¿Hay otros usuarios?** — El sistema parece de un solo usuario (Manu).
+### 1. ¿Cuál es el objetivo deportivo exacto?
+
+El objetivo principal es mejorar el rendimiento ciclista de forma sostenible:
+- Recuperar un FTP aproximado de **296W**
+- Volver a un nivel cercano a **4,7 W/kg**
+- Mejorar como ciclista manteniendo salud, motivación y disfrute
+
+**El objetivo NO es perseguir únicamente números.** El verdadero objetivo es crear un entrenador inteligente que ayude a mejorar durante años. El sistema debe valorar siempre: rendimiento, recuperación, fatiga, motivación, vida personal y disfrute del ciclismo.
+
+### 2. ¿Por qué FTP 240W?
+
+240W es el **FTP de referencia actual** del sistema. Es un valor operativo, no el mejor histórico. El mejor nivel histórico estuvo alrededor de **275W**. El FTP debe considerarse un valor **dinámico** que puede evolucionar según entrenamientos, rendimiento real, estimaciones de Garmin, Intervals y pruebas realizadas. **Nunca debe tratarse como un dato fijo permanente.**
+
+### 3. ¿Cuál es la frecuencia de entrenamiento semanal esperada?
+
+No existe una cantidad fija obligatoria. La planificación debe adaptarse a la vida real:
+- Trabajo siempre en turno de mañana
+- Día libre fijo: **domingo**
+- Otro día libre que rota entre lunes y sábado
+- Los días de trabajo se puede entrenar después de trabajar
+- Los días libres son los mejores para entrenamientos largos, calidad y sesiones específicas
+
+**La prioridad es la constancia.** Es preferible entrenar bien durante años que cumplir un plan perfecto durante pocas semanas.
+
+### 4. ¿Hay algún plan de competición?
+
+Actualmente **no existe un calendario de competición fijo**. El sistema debe permitir introducir objetivos futuros. Las competiciones deben modificar la planificación si aparecen. El objetivo principal no es preparar una única carrera, sino mejorar el nivel general como ciclista.
+
+### 5. ¿Cuál es la relación con la grupeta?
+
+La grupeta es una **parte fundamental** del proyecto. Las salidas sociales son entrenamiento real y **no deben considerarse una desviación del plan**. Una salida con la grupeta puede aportar: volumen, intensidad, motivación, experiencia y disfrute. El sistema debe analizar esas salidas igual que cualquier otro entrenamiento y **no debe penalizar** una salida diferente al entrenamiento previsto.
+
+### 6. ¿Hay preferencias de horario?
+
+Sí. La disponibilidad está condicionada por el trabajo:
+- Turno fijo de mañana
+- Entrenamientos normalmente después del trabajo
+- Domingo normalmente salida con la grupeta
+- Segundo día libre variable entre lunes y sábado
+
+La IA debe adaptar los entrenamientos a la disponibilidad real. **Nunca debe proponer planes imposibles de cumplir.**
+
+### 7. ¿Cuál es la historia del proyecto?
+
+World Tour Coach nació con la idea de crear un entrenador personal inteligente basado en datos reales. No busca ser un simple bot de respuestas. Busca analizar: entrenamientos, recuperación, carga, nutrición, fatiga, rendimiento y contexto personal. El proyecto ha evolucionado añadiendo: Telegram, Node.js, Supabase, Railway, IA, Garmin, Intervals, análisis deportivo, nutrición, periodización y predicción. **La filosofía principal es mejorar continuamente sin destruir lo que ya funciona.**
+
+### 8. ¿Hay limitaciones físicas?
+
+No existen lesiones importantes conocidas actualmente. Pero el sistema debe tener siempre una **filosofía conservadora**. La recuperación tiene prioridad sobre forzar rendimiento. Si los datos indican fatiga elevada, el sistema debe recomendar reducir carga. **Nunca debe buscar mejoras rápidas sacrificando la continuidad.**
+
+### 9. ¿Cuál es el presupuesto?
+
+El proyecto busca mantener una buena relación calidad/precio:
+- Priorizar herramientas gratuitas cuando sean suficientes
+- Utilizar servicios de pago solo cuando aporten una mejora clara
+- Evitar costes innecesarios
+
+La eficiencia del sistema también es importante.
+
+### 10. ¿Hay otros usuarios?
+
+Actualmente el proyecto está diseñado para un **único usuario: Manu**. Sin embargo, la arquitectura debe evitar decisiones que impidan una futura evolución multiusuario. No implementar ahora funciones multiusuario, solo mantener una estructura que no cierre esa posibilidad.
+
+---
+
+## REGLAS FUNDAMENTALES DEL ENTRENADOR
+
+Estas reglas deben considerarse parte del funcionamiento del sistema:
+
+1. **Mejorar sí, obsesionarse no.**
+2. **El plan debe adaptarse a la persona, no la persona al plan.**
+3. **La grupeta y disfrutar del ciclismo tienen valor deportivo.**
+4. **Una semana con salidas sociales puede ser una buena semana de entrenamiento.**
+5. **La perfección del entrenamiento no es el objetivo.**
+6. **La adherencia durante años es más importante que cumplir un entrenamiento aislado.**
+7. **Nunca inventar datos.**
+8. **Nunca recomendar algo que no pueda justificarse.**
+9. **La recuperación tiene prioridad.**
+10. **World Tour Coach debe actuar como un entrenador humano experimentado, no como un generador automático de sesiones.**
