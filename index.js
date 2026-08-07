@@ -1079,32 +1079,72 @@ async function fetchIntervals(endpoint) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = API_BASE + endpoint;
 
-  const response = await fetchWithTimeout(url, {
-    method: 'GET',
-    headers: { 'Authorization': `Basic ${auth}` }
-  }, TIMEOUTS.INTERVALS);
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Basic ${auth}` }
+    }, TIMEOUTS.INTERVALS);
 
-  if (!response.ok) throw new Error(`Intervals API HTTP ${response.status}`);
-  return response.json();
+    if (!response.ok) {
+      // Intentar leer el body de error para diagnóstico
+      let bodyError = '';
+      try { bodyError = await response.text(); } catch (_) {}
+      console.log(`[fetchIntervals] ❌ HTTP ${response.status} en endpoint ${endpoint}. Body: ${bodyError.substring(0, 200)}`);
+      throw new Error(`Intervals API HTTP ${response.status} (${endpoint})`);
+    }
+
+    // Parsear JSON con manejo de error
+    try {
+      return await response.json();
+    } catch (jsonErr) {
+      console.log(`[fetchIntervals] ❌ Error parseando JSON en endpoint ${endpoint}: ${jsonErr.message}`);
+      throw new Error(`Intervals API JSON inválido (${endpoint}): ${jsonErr.message}`);
+    }
+  } catch (err) {
+    // Ya es un error nuestro (HTTP, JSON, timeout) → relanzar con contexto
+    if (err.message && (err.message.includes('Intervals API') || err.message.includes('Timeout'))) {
+      throw err;
+    }
+    // Error de red u otro
+    console.log(`[fetchIntervals] ❌ Error de red en endpoint ${endpoint}: ${err.message}`);
+    throw new Error(`Intervals API error de red (${endpoint}): ${err.message}`);
+  }
 }
 
 async function postIntervals(endpoint, payload) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = API_BASE + endpoint;
 
-  const response = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Basic ${auth}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  }, TIMEOUTS.INTERVALS);
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }, TIMEOUTS.INTERVALS);
 
-  if (!response.ok && response.status !== 201) {
-    throw new Error(`Intervals API POST HTTP ${response.status}`);
+    if (!response.ok && response.status !== 201) {
+      let bodyError = '';
+      try { bodyError = await response.text(); } catch (_) {}
+      console.log(`[postIntervals] ❌ HTTP ${response.status} en endpoint ${endpoint}. Body: ${bodyError.substring(0, 200)}`);
+      throw new Error(`Intervals API POST HTTP ${response.status} (${endpoint})`);
+    }
+
+    try {
+      return await response.json();
+    } catch (jsonErr) {
+      console.log(`[postIntervals] ❌ Error parseando JSON en endpoint ${endpoint}: ${jsonErr.message}`);
+      throw new Error(`Intervals API JSON inválido (${endpoint}): ${jsonErr.message}`);
+    }
+  } catch (err) {
+    if (err.message && (err.message.includes('Intervals API') || err.message.includes('Timeout'))) {
+      throw err;
+    }
+    console.log(`[postIntervals] ❌ Error de red en endpoint ${endpoint}: ${err.message}`);
+    throw new Error(`Intervals API error de red (${endpoint}): ${err.message}`);
   }
-  return response.json();
 }
 
 // ─── NUEVA FUNCIÓN: ACTIVITY DETAIL (ENDPOINT CORRECTO) ──────
@@ -1112,13 +1152,32 @@ async function fetchIntervalsActivity(activityId) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = `https://intervals.icu/api/v1/activity/${activityId}`;
 
-  const response = await fetchWithTimeout(url, {
-    method: 'GET',
-    headers: { 'Authorization': `Basic ${auth}` }
-  }, TIMEOUTS.INTERVALS);
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Basic ${auth}` }
+    }, TIMEOUTS.INTERVALS);
 
-  if (!response.ok) throw new Error(`Intervals API HTTP ${response.status}`);
-  return response.json();
+    if (!response.ok) {
+      let bodyError = '';
+      try { bodyError = await response.text(); } catch (_) {}
+      console.log(`[fetchIntervalsActivity] ❌ HTTP ${response.status} para activity ${activityId}. Body: ${bodyError.substring(0, 200)}`);
+      throw new Error(`Intervals API HTTP ${response.status} (activity ${activityId})`);
+    }
+
+    try {
+      return await response.json();
+    } catch (jsonErr) {
+      console.log(`[fetchIntervalsActivity] ❌ Error parseando JSON para activity ${activityId}: ${jsonErr.message}`);
+      throw new Error(`Intervals API JSON inválido (activity ${activityId}): ${jsonErr.message}`);
+    }
+  } catch (err) {
+    if (err.message && (err.message.includes('Intervals API') || err.message.includes('Timeout'))) {
+      throw err;
+    }
+    console.log(`[fetchIntervalsActivity] ❌ Error de red para activity ${activityId}: ${err.message}`);
+    throw new Error(`Intervals API error de red (activity ${activityId}): ${err.message}`);
+  }
 }
 
 async function fetchWellness(days) {
