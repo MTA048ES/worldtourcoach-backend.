@@ -3272,12 +3272,13 @@ function calcularResultadoFeedback(feedback) {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdStart() {
-  const fase = getFaseActual();
-  const semana = getSemanaActual();
-  const ftpEstimado = calcularFTPEstimado();
-  const proy = calcularProyeccionObjetivo();
-  
-  const msg = `🌍 *WORLD TOUR COACH v9.5 - DEFINITIVO*
+  try {
+    const fase = getFaseActual();
+    const semana = getSemanaActual();
+    const ftpEstimado = calcularFTPEstimado();
+    const proy = calcularProyeccionObjetivo();
+    
+    const msg = `🌍 *WORLD TOUR COACH v9.5 - DEFINITIVO*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Hola Manu. Sistema unificado con periodización real.
@@ -3324,7 +3325,11 @@ Hola Manu. Sistema unificado con periodización real.
 FTP: ${CONFIG.FTP}W | Peso: ${CONFIG.WEIGHT_KG}kg | Edad: ${CONFIG.AGE_YEARS} años
 🧠 v9.5: Periodización + Predicción FTP + Nutrición avanzada + Movilidad`;
 
-  await sendTelegram(msg);
+    await sendTelegram(msg);
+  } catch (err) {
+    console.log('[cmdStart] ERROR:', err.toString());
+    await sendTelegram(`Error en /start: ${err.message}`);
+  }
 }
 
 async function cmdHoy(chatId) {
@@ -3833,41 +3838,46 @@ async function cmdTraza() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdProgreso() {
-  await cargarHistorialCompleto();
-  const historial = obtenerHistorial();
-  if (historial.length < 5) {
-    await sendTelegram('📊 *PROGRESO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 5 entrenos para mostrar tendencias.');
-    return;
+  try {
+    await cargarHistorialCompleto();
+    const historial = obtenerHistorial();
+    if (historial.length < 5) {
+      await sendTelegram('📊 *PROGRESO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 5 entrenos para mostrar tendencias.');
+      return;
+    }
+    
+    let msg = '📊 *PROGRESO - EVOLUCIÓN*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
+    const ftpActual = CONFIG.FTP;
+    const ftpEstimado = calcularFTPEstimado();
+    const diff = ftpEstimado - ftpActual;
+    
+    msg += `*🚴 FTP ESTIMADO*\n`;
+    msg += `• FTP base: ${ftpActual}W\n`;
+    msg += `• FTP estimado actual: *${ftpEstimado}W*\n`;
+    msg += `• Variación: ${diff > 0 ? '+' : ''}${diff}W\n\n`;
+    
+    const proy = calcularProyeccionObjetivo();
+    msg += `*🎯 PROYECCIÓN*\n`;
+    msg += `• ${proy.mensaje}\n\n`;
+    
+    const ultimos = historial.slice(-10);
+    msg += `*📈 ÚLTIMOS 10 ENTRENOS*\n`;
+    ultimos.forEach((h, idx) => {
+      const fecha = new Date(h.fecha);
+      const fechaStr = `${String(fecha.getDate()).padStart(2, '0')}/${String(fecha.getMonth() + 1).padStart(2, '0')}`;
+      const tipo = h.entreno.tipo || 'N/A';
+      const tss = h.entreno.tss || 0;
+      const resultado = h.resultado || 0;
+      const emoji = resultado >= 80 ? '🟢' : resultado >= 60 ? '🟡' : '🔴';
+      msg += `• ${emoji} ${fechaStr} | ${tipo.toUpperCase()} | TSS:${tss} | ${resultado}%\n`;
+    });
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdProgreso] ERROR:', err.toString());
+    await sendTelegram(`Error en /progreso: ${err.message}`);
   }
-  
-  let msg = '📊 *PROGRESO - EVOLUCIÓN*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  
-  const ftpActual = CONFIG.FTP;
-  const ftpEstimado = calcularFTPEstimado();
-  const diff = ftpEstimado - ftpActual;
-  
-  msg += `*🚴 FTP ESTIMADO*\n`;
-  msg += `• FTP base: ${ftpActual}W\n`;
-  msg += `• FTP estimado actual: *${ftpEstimado}W*\n`;
-  msg += `• Variación: ${diff > 0 ? '+' : ''}${diff}W\n\n`;
-  
-  const proy = calcularProyeccionObjetivo();
-  msg += `*🎯 PROYECCIÓN*\n`;
-  msg += `• ${proy.mensaje}\n\n`;
-  
-  const ultimos = historial.slice(-10);
-  msg += `*📈 ÚLTIMOS 10 ENTRENOS*\n`;
-  ultimos.forEach((h, idx) => {
-    const fecha = new Date(h.fecha);
-    const fechaStr = `${String(fecha.getDate()).padStart(2, '0')}/${String(fecha.getMonth() + 1).padStart(2, '0')}`;
-    const tipo = h.entreno.tipo || 'N/A';
-    const tss = h.entreno.tss || 0;
-    const resultado = h.resultado || 0;
-    const emoji = resultado >= 80 ? '🟢' : resultado >= 60 ? '🟡' : '🔴';
-    msg += `• ${emoji} ${fechaStr} | ${tipo.toUpperCase()} | TSS:${tss} | ${resultado}%\n`;
-  });
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3875,34 +3885,39 @@ async function cmdProgreso() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdPrediccion() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) {
-    await sendTelegram('Sin datos disponibles.');
-    return;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) {
+      await sendTelegram('Sin datos disponibles.');
+      return;
+    }
+    
+    const ftpEstimado = state.ftpEstimado || CONFIG.FTP;
+    const proy = state.proyeccion || calcularProyeccionObjetivo();
+    
+    let msg = '🔮 *PREDICCIÓN DE RENDIMIENTO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📊 FTP ACTUAL*\n`;
+    msg += `• FTP de entrada: ${CONFIG.FTP}W\n`;
+    msg += `• FTP estimado actual: *${ftpEstimado}W*\n\n`;
+    
+    msg += `*🎯 OBJETIVO: ${CONFIG.FTP_HISTORICO.valor}W*\n`;
+    msg += `• ${proy.mensaje}\n\n`;
+    
+    const pcts = [0.85, 0.95, 1.05, 1.15];
+    const nombres = ['SweetSpot', 'FTP', 'VO2', 'Anaerobic'];
+    msg += `*⚡ RENDIMIENTO ESTIMADO*\n`;
+    pcts.forEach((pct, idx) => {
+      const w = Math.round(ftpEstimado * pct);
+      msg += `• ${nombres[idx]}: ${w}W (${(pct*100).toFixed(0)}% FTP)\n`;
+    });
+    
+    msg += '\n💡 *Para mejorar:* Mantén consistencia y prioriza recuperación.';
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdPrediccion] ERROR:', err.toString());
+    await sendTelegram(`Error en /prediccion: ${err.message}`);
   }
-  
-  const ftpEstimado = state.ftpEstimado || CONFIG.FTP;
-  const proy = state.proyeccion || calcularProyeccionObjetivo();
-  
-  let msg = '🔮 *PREDICCIÓN DE RENDIMIENTO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📊 FTP ACTUAL*\n`;
-  msg += `• FTP de entrada: ${CONFIG.FTP}W\n`;
-  msg += `• FTP estimado actual: *${ftpEstimado}W*\n\n`;
-  
-  msg += `*🎯 OBJETIVO: ${CONFIG.FTP_HISTORICO.valor}W*\n`;
-  msg += `• ${proy.mensaje}\n\n`;
-  
-  const pcts = [0.85, 0.95, 1.05, 1.15];
-  const nombres = ['SweetSpot', 'FTP', 'VO2', 'Anaerobic'];
-  msg += `*⚡ RENDIMIENTO ESTIMADO*\n`;
-  pcts.forEach((pct, idx) => {
-    const w = Math.round(ftpEstimado * pct);
-    msg += `• ${nombres[idx]}: ${w}W (${(pct*100).toFixed(0)}% FTP)\n`;
-  });
-  
-  msg += '\n💡 *Para mejorar:* Mantén consistencia y prioriza recuperación.';
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3910,43 +3925,48 @@ async function cmdPrediccion() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdFatiga() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  let msg = '🔬 *ANÁLISIS DE FATIGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += '*📊 MÉTRICAS ACTUALES*\n';
-  msg += `• TSB: *${state.tsb.toFixed(1)}* `;
-  if (state.tsb > 0) msg += '🟢 (Fresco)';
-  else if (state.tsb > -10) msg += '🟡 (Equilibrado)';
-  else if (state.tsb > -20) msg += '🟠 (Fatigado)';
-  else msg += '🔴 (Fatiga extrema)';
-  msg += '\n';
-  msg += `• Readiness: *${state.readiness}/100* `;
-  if (state.readiness > 70) msg += '🟢 (Alta)';
-  else if (state.readiness > 50) msg += '🟡 (Media)';
-  else msg += '🔴 (Baja)';
-  msg += '\n';
-  msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
-  msg += `• ACWR: ${state.estado.acwr.toFixed(2)} ${state.estado.acwr > 1.3 ? '⚠️ ALTO' : '✅ OK'}\n`;
-  msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
-  msg += `• Calor: ${state.haceCalor ? `🔥 ${state.heatIndex}°C` : '✅ Normal'}\n\n`;
-  
-  if (state.horasRecuperacion) {
-    msg += `*⏰ RECUPERACIÓN ESTIMADA*\n`;
-    msg += `• ${state.horasRecuperacion}h hasta próximo entreno de calidad\n`;
-    msg += `• Próximo entreno: ${state.proximoEntreno}\n\n`;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    let msg = '🔬 *ANÁLISIS DE FATIGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += '*📊 MÉTRICAS ACTUALES*\n';
+    msg += `• TSB: *${state.tsb.toFixed(1)}* `;
+    if (state.tsb > 0) msg += '🟢 (Fresco)';
+    else if (state.tsb > -10) msg += '🟡 (Equilibrado)';
+    else if (state.tsb > -20) msg += '🟠 (Fatigado)';
+    else msg += '🔴 (Fatiga extrema)';
+    msg += '\n';
+    msg += `• Readiness: *${state.readiness}/100* `;
+    if (state.readiness > 70) msg += '🟢 (Alta)';
+    else if (state.readiness > 50) msg += '🟡 (Media)';
+    else msg += '🔴 (Baja)';
+    msg += '\n';
+    msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
+    msg += `• ACWR: ${state.estado.acwr.toFixed(2)} ${state.estado.acwr > 1.3 ? '⚠️ ALTO' : '✅ OK'}\n`;
+    msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
+    msg += `• Calor: ${state.haceCalor ? `🔥 ${state.heatIndex}°C` : '✅ Normal'}\n\n`;
+    
+    if (state.horasRecuperacion) {
+      msg += `*⏰ RECUPERACIÓN ESTIMADA*\n`;
+      msg += `• ${state.horasRecuperacion}h hasta próximo entreno de calidad\n`;
+      msg += `• Próximo entreno: ${state.proximoEntreno}\n\n`;
+    }
+    
+    msg += '*💡 RECOMENDACIÓN*\n';
+    if (state.tsb < -20 || state.readiness < 40) {
+      msg += '🔴 *DESCANSO TOTAL OBLIGATORIO*\n• Haz solo movilidad suave\n• Prioriza dormir 8+ horas\n';
+    } else if (state.tsb < -10 || state.readiness < 55) {
+      msg += '🟡 *RECUPERACIÓN ACTIVA*\n• Z1-Z2 suave (30-45 min)\n• Evita intensidad\n';
+    } else if (state.tsb < 0 || state.readiness < 70) {
+      msg += '🟢 *ENTRENO CONTROLADO*\n• Z2 o SweetSpot ligero\n• Controla la intensidad\n';
+    } else {
+      msg += '🟢 *VENTANA DE CALIDAD*\n• Puedes entrenar con intensidad\n• Aprovecha el buen estado\n';
+    }
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdFatiga] ERROR:', err.toString());
+    await sendTelegram(`Error en /fatiga: ${err.message}`);
   }
-  
-  msg += '*💡 RECOMENDACIÓN*\n';
-  if (state.tsb < -20 || state.readiness < 40) {
-    msg += '🔴 *DESCANSO TOTAL OBLIGATORIO*\n• Haz solo movilidad suave\n• Prioriza dormir 8+ horas\n';
-  } else if (state.tsb < -10 || state.readiness < 55) {
-    msg += '🟡 *RECUPERACIÓN ACTIVA*\n• Z1-Z2 suave (30-45 min)\n• Evita intensidad\n';
-  } else if (state.tsb < 0 || state.readiness < 70) {
-    msg += '🟢 *ENTRENO CONTROLADO*\n• Z2 o SweetSpot ligero\n• Controla la intensidad\n';
-  } else {
-    msg += '🟢 *VENTANA DE CALIDAD*\n• Puedes entrenar con intensidad\n• Aprovecha el buen estado\n';
-  }
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3954,41 +3974,46 @@ async function cmdFatiga() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdRecuperacion() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) {
-    await sendTelegram('Sin datos disponibles.');
-    return;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) {
+      await sendTelegram('Sin datos disponibles.');
+      return;
+    }
+    
+    const horas = state.horasRecuperacion || 8;
+    const proximo = state.proximoEntreno || 'Mañana';
+    
+    let msg = '⏳ *RECUPERACIÓN PREDICTIVA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📊 FACTORES CONSIDERADOS*\n`;
+    msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
+    msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
+    msg += `• Calidad de sueño: ${state.estado.sleepQuality === 1 ? 'Mala' : state.estado.sleepQuality === 2 ? 'Regular' : 'Buena'}\n`;
+    msg += `• Estado actual: ${state.tsb > 0 ? 'Fresco' : state.tsb > -10 ? 'Equilibrado' : 'Fatigado'}\n\n`;
+    
+    msg += `*⏰ TIEMPO ESTIMADO*\n`;
+    msg += `• ${horas}h de recuperación necesarias\n`;
+    msg += `• Próximo entreno de calidad: ${proximo}\n\n`;
+    
+    msg += `*💡 CONSEJOS DE RECUPERACIÓN*\n`;
+    if (horas > 12) {
+      msg += '• 🔴 Prioriza descanso absoluto\n';
+      msg += '• 🛌 Dormir 8+ horas\n';
+      msg += '• 🥤 Hidratación con electrolitos\n';
+    } else if (horas > 8) {
+      msg += '• 🟡 Recuperación activa (Z1 suave)\n';
+      msg += '• 🛌 Dormir 7-8 horas\n';
+      msg += '• 🥤 Hidratación adecuada\n';
+    } else {
+      msg += '• 🟢 Puedes entrenar con normalidad\n';
+      msg += '• 🛌 Mantén buena higiene de sueño\n';
+    }
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdRecuperacion] ERROR:', err.toString());
+    await sendTelegram(`Error en /recuperacion: ${err.message}`);
   }
-  
-  const horas = state.horasRecuperacion || 8;
-  const proximo = state.proximoEntreno || 'Mañana';
-  
-  let msg = '⏳ *RECUPERACIÓN PREDICTIVA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📊 FACTORES CONSIDERADOS*\n`;
-  msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
-  msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
-  msg += `• Calidad de sueño: ${state.estado.sleepQuality === 1 ? 'Mala' : state.estado.sleepQuality === 2 ? 'Regular' : 'Buena'}\n`;
-  msg += `• Estado actual: ${state.tsb > 0 ? 'Fresco' : state.tsb > -10 ? 'Equilibrado' : 'Fatigado'}\n\n`;
-  
-  msg += `*⏰ TIEMPO ESTIMADO*\n`;
-  msg += `• ${horas}h de recuperación necesarias\n`;
-  msg += `• Próximo entreno de calidad: ${proximo}\n\n`;
-  
-  msg += `*💡 CONSEJOS DE RECUPERACIÓN*\n`;
-  if (horas > 12) {
-    msg += '• 🔴 Prioriza descanso absoluto\n';
-    msg += '• 🛌 Dormir 8+ horas\n';
-    msg += '• 🥤 Hidratación con electrolitos\n';
-  } else if (horas > 8) {
-    msg += '• 🟡 Recuperación activa (Z1 suave)\n';
-    msg += '• 🛌 Dormir 7-8 horas\n';
-    msg += '• 🥤 Hidratación adecuada\n';
-  } else {
-    msg += '• 🟢 Puedes entrenar con normalidad\n';
-    msg += '• 🛌 Mantén buena higiene de sueño\n';
-  }
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3996,36 +4021,41 @@ async function cmdRecuperacion() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdAlerta() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  let msg = '🚨 *ALERTA DE SOBREENTRENAMIENTO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  const riesgos = [];
-  if (state.tsb < -25) riesgos.push(`🔴 TSB extremo (${state.tsb.toFixed(1)})`);
-  else if (state.tsb < -15) riesgos.push(`🟠 TSB bajo (${state.tsb.toFixed(1)})`);
-  if (state.readiness < 40) riesgos.push(`🔴 Readiness muy bajo (${state.readiness}/100)`);
-  else if (state.readiness < 55) riesgos.push(`🟠 Readiness bajo (${state.readiness}/100)`);
-  if (state.estado.acwr > 1.5) riesgos.push(`🔴 ACWR muy alto (${state.estado.acwr.toFixed(2)})`);
-  else if (state.estado.acwr > 1.3) riesgos.push(`🟠 ACWR alto (${state.estado.acwr.toFixed(2)})`);
-  if (state.estado.sleepQuality === 1) riesgos.push('🟠 Sueño malo');
-  if (state.estado.hrv < 40) riesgos.push('🟠 HRV bajo');
-  if (state.estado.weeklyTss > state.restricciones.tssMaxSemanal) {
-    riesgos.push(`🔴 Sobrecarga semanal (${Math.round(state.estado.weeklyTss)} TSS)`);
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    let msg = '🚨 *ALERTA DE SOBREENTRENAMIENTO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    const riesgos = [];
+    if (state.tsb < -25) riesgos.push(`🔴 TSB extremo (${state.tsb.toFixed(1)})`);
+    else if (state.tsb < -15) riesgos.push(`🟠 TSB bajo (${state.tsb.toFixed(1)})`);
+    if (state.readiness < 40) riesgos.push(`🔴 Readiness muy bajo (${state.readiness}/100)`);
+    else if (state.readiness < 55) riesgos.push(`🟠 Readiness bajo (${state.readiness}/100)`);
+    if (state.estado.acwr > 1.5) riesgos.push(`🔴 ACWR muy alto (${state.estado.acwr.toFixed(2)})`);
+    else if (state.estado.acwr > 1.3) riesgos.push(`🟠 ACWR alto (${state.estado.acwr.toFixed(2)})`);
+    if (state.estado.sleepQuality === 1) riesgos.push('🟠 Sueño malo');
+    if (state.estado.hrv < 40) riesgos.push('🟠 HRV bajo');
+    if (state.estado.weeklyTss > state.restricciones.tssMaxSemanal) {
+      riesgos.push(`🔴 Sobrecarga semanal (${Math.round(state.estado.weeklyTss)} TSS)`);
+    }
+    msg += '*📊 ANÁLISIS DE RIESGOS*\n';
+    if (riesgos.length === 0) {
+      msg += '✅ No se detectan riesgos de sobreentrenamiento.\n• Estado: 🟢 Controlado.\n';
+    } else {
+      riesgos.forEach((r) => { msg += `• ${r}\n`; });
+    }
+    msg += '\n*💡 RECOMENDACIÓN*\n';
+    if (riesgos.length >= 3) {
+      msg += '🔴 *ALTO RIESGO DE SOBREENTRENAMIENTO*\n• Descanso total 2-3 días.\n• Consulta con un profesional si es necesario.\n';
+    } else if (riesgos.length >= 2) {
+      msg += '🟡 *RIESGO MODERADO*\n• Reduce carga e intensidad.\n• Prioriza descanso y recuperación.\n';
+    } else if (riesgos.length >= 1) {
+      msg += '🟡 *RIESGO BAJO*\n• Controla la carga hoy.\n• Escucha a tu cuerpo.\n';
+    }
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdAlerta] ERROR:', err.toString());
+    await sendTelegram(`Error en /alerta: ${err.message}`);
   }
-  msg += '*📊 ANÁLISIS DE RIESGOS*\n';
-  if (riesgos.length === 0) {
-    msg += '✅ No se detectan riesgos de sobreentrenamiento.\n• Estado: 🟢 Controlado.\n';
-  } else {
-    riesgos.forEach((r) => { msg += `• ${r}\n`; });
-  }
-  msg += '\n*💡 RECOMENDACIÓN*\n';
-  if (riesgos.length >= 3) {
-    msg += '🔴 *ALTO RIESGO DE SOBREENTRENAMIENTO*\n• Descanso total 2-3 días.\n• Consulta con un profesional si es necesario.\n';
-  } else if (riesgos.length >= 2) {
-    msg += '🟡 *RIESGO MODERADO*\n• Reduce carga e intensidad.\n• Prioriza descanso y recuperación.\n';
-  } else if (riesgos.length >= 1) {
-    msg += '🟡 *RIESGO BAJO*\n• Controla la carga hoy.\n• Escucha a tu cuerpo.\n';
-  }
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4033,39 +4063,44 @@ async function cmdAlerta() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdTendencias() {
-  await cargarHistorialCompleto();
-  const historial = obtenerHistorial();
-  if (historial.length < 10) {
-    await sendTelegram('📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 10 entrenos para mostrar tendencias.');
-    return;
+  try {
+    await cargarHistorialCompleto();
+    const historial = obtenerHistorial();
+    if (historial.length < 10) {
+      await sendTelegram('📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 10 entrenos para mostrar tendencias.');
+      return;
+    }
+    
+    let msg = '📈 *TENDENCIAS - 90 DÍAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
+    let totalTSS = 0, totalRPE = 0, totalReadiness = 0;
+    historial.slice(-20).forEach(h => {
+      totalTSS += h.entreno?.tss || 0;
+      totalRPE += h.feedback?.rpe || 5;
+      totalReadiness += h.entreno?.readiness || 50;
+    });
+    const n = Math.min(historial.length, 20);
+    
+    msg += `*📊 MEDIAS (últimos ${n} entrenos)*\n`;
+    msg += `• TSS medio: ${Math.round(totalTSS/n)}\n`;
+    msg += `• RPE medio: ${(totalRPE/n).toFixed(1)}\n`;
+    msg += `• Readiness media: ${Math.round(totalReadiness/n)}/100\n\n`;
+    
+    const recientes = historial.slice(-10);
+    const antiguos = historial.slice(-20, -10);
+    const tssRec = recientes.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
+    const tssAnt = antiguos.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
+    
+    msg += `*📈 TENDENCIA DE CARGA*\n`;
+    if (tssRec > tssAnt * 1.2) msg += '• ⬆️ Carga AUMENTANDO - Vigila fatiga\n';
+    else if (tssRec < tssAnt * 0.8) msg += '• ⬇️ Carga DISMINUYENDO - Posible descanso\n';
+    else msg += '• ➡️ Carga ESTABLE - Buen ritmo\n';
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdTendencias] ERROR:', err.toString());
+    await sendTelegram(`Error en /tendencias: ${err.message}`);
   }
-  
-  let msg = '📈 *TENDENCIAS - 90 DÍAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  
-  let totalTSS = 0, totalRPE = 0, totalReadiness = 0;
-  historial.slice(-20).forEach(h => {
-    totalTSS += h.entreno?.tss || 0;
-    totalRPE += h.feedback?.rpe || 5;
-    totalReadiness += h.entreno?.readiness || 50;
-  });
-  const n = Math.min(historial.length, 20);
-  
-  msg += `*📊 MEDIAS (últimos ${n} entrenos)*\n`;
-  msg += `• TSS medio: ${Math.round(totalTSS/n)}\n`;
-  msg += `• RPE medio: ${(totalRPE/n).toFixed(1)}\n`;
-  msg += `• Readiness media: ${Math.round(totalReadiness/n)}/100\n\n`;
-  
-  const recientes = historial.slice(-10);
-  const antiguos = historial.slice(-20, -10);
-  const tssRec = recientes.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
-  const tssAnt = antiguos.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
-  
-  msg += `*📈 TENDENCIA DE CARGA*\n`;
-  if (tssRec > tssAnt * 1.2) msg += '• ⬆️ Carga AUMENTANDO - Vigila fatiga\n';
-  else if (tssRec < tssAnt * 0.8) msg += '• ⬇️ Carga DISMINUYENDO - Posible descanso\n';
-  else msg += '• ➡️ Carga ESTABLE - Buen ritmo\n';
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4073,38 +4108,43 @@ async function cmdTendencias() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdSemana() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const e = state.estado;
-  const fase = getFaseActual();
-  const semana = getSemanaActual();
-  const tssObj = getTssObjetivoSemanal();
-  const calidad = contarSesionesCalidadSemana();
-  const maxCalidad = getMaxSesionesCalidad();
-  
-  let msg = '📊 *RESUMEN SEMANAL*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📅 FASE:* ${getNombreFase()} (Semana ${semana}/${getSemanasFase()})\n`;
-  msg += `*📈 CARGA*\n`;
-  msg += `• TSS acumulado: ${Math.round(e.weeklyTss)} / ${tssObj}\n`;
-  msg += `• Sesiones: ${e.weeklySessions}\n`;
-  msg += `• Media TSS/sesión: ${e.weeklySessions > 0 ? Math.round(e.weeklyTss / e.weeklySessions) : 0}\n`;
-  msg += `• Calidad: ${calidad}/${maxCalidad} sesiones\n\n`;
-  
-  msg += `*💪 ESTADO ACTUAL*\n`;
-  msg += `• CTL: ${e.ctl.toFixed(1)}\n`;
-  msg += `• ATL: ${e.atl.toFixed(1)}\n`;
-  msg += `• TSB: ${e.tsb.toFixed(1)}\n\n`;
-  
-  msg += `*📊 ACWR:* ${e.acwr.toFixed(2)}\n`;
-  if (e.acwr > 1.3) msg += '⚠️ ACWR alto - Reduce carga esta semana\n';
-  else if (e.acwr < 0.8) msg += '📈 ACWR bajo - Puedes aumentar carga\n';
-  else msg += '✅ ACWR en rango óptimo\n';
-  
-  if (state.horasRecuperacion) {
-    msg += `\n*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h hasta próximo entreno de calidad.`;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const e = state.estado;
+    const fase = getFaseActual();
+    const semana = getSemanaActual();
+    const tssObj = getTssObjetivoSemanal();
+    const calidad = contarSesionesCalidadSemana();
+    const maxCalidad = getMaxSesionesCalidad();
+    
+    let msg = '📊 *RESUMEN SEMANAL*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📅 FASE:* ${getNombreFase()} (Semana ${semana}/${getSemanasFase()})\n`;
+    msg += `*📈 CARGA*\n`;
+    msg += `• TSS acumulado: ${Math.round(e.weeklyTss)} / ${tssObj}\n`;
+    msg += `• Sesiones: ${e.weeklySessions}\n`;
+    msg += `• Media TSS/sesión: ${e.weeklySessions > 0 ? Math.round(e.weeklyTss / e.weeklySessions) : 0}\n`;
+    msg += `• Calidad: ${calidad}/${maxCalidad} sesiones\n\n`;
+    
+    msg += `*💪 ESTADO ACTUAL*\n`;
+    msg += `• CTL: ${e.ctl.toFixed(1)}\n`;
+    msg += `• ATL: ${e.atl.toFixed(1)}\n`;
+    msg += `• TSB: ${e.tsb.toFixed(1)}\n\n`;
+    
+    msg += `*📊 ACWR:* ${e.acwr.toFixed(2)}\n`;
+    if (e.acwr > 1.3) msg += '⚠️ ACWR alto - Reduce carga esta semana\n';
+    else if (e.acwr < 0.8) msg += '📈 ACWR bajo - Puedes aumentar carga\n';
+    else msg += '✅ ACWR en rango óptimo\n';
+    
+    if (state.horasRecuperacion) {
+      msg += `\n*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h hasta próximo entreno de calidad.`;
+    }
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdSemana] ERROR:', err.toString());
+    await sendTelegram(`Error en /semana: ${err.message}`);
   }
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4369,75 +4409,80 @@ async function cmdHistorial() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdObjetivo() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const ftpHistorico = CONFIG.FTP_HISTORICO || { valor: 296, peso: 60 };
-  const diffFTP = ftpHistorico.valor - CONFIG.FTP;
-  const pesoDiff = CONFIG.WEIGHT_KG - ftpHistorico.peso;
-  const workout = state.workout;
-  const ftpEstimado = state.ftpEstimado || CONFIG.FTP;
-  const proy = state.proyeccion || calcularProyeccionObjetivo();
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const ftpHistorico = CONFIG.FTP_HISTORICO || { valor: 296, peso: 60 };
+    const diffFTP = ftpHistorico.valor - CONFIG.FTP;
+    const pesoDiff = CONFIG.WEIGHT_KG - ftpHistorico.peso;
+    const workout = state.workout;
+    const ftpEstimado = state.ftpEstimado || CONFIG.FTP;
+    const proy = state.proyeccion || calcularProyeccionObjetivo();
 
-  let msg = `🎯 *PLAN PARA RECUPERAR LOS ${ftpHistorico.valor}W*\n`;
-  msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += '*📊 SITUACIÓN ACTUAL*\n';
-  msg += `• FTP actual: *${CONFIG.FTP}W*\n`;
-  msg += `• FTP estimado: *${ftpEstimado}W*\n`;
-  msg += `• Mejor histórico: *${ftpHistorico.valor}W* (${ftpHistorico.fecha})\n`;
-  msg += `• Diferencia: *${diffFTP}W* a recuperar\n\n`;
-  
-  msg += `*📈 PROYECCIÓN*\n`;
-  msg += `• ${proy.mensaje}\n\n`;
+    let msg = `🎯 *PLAN PARA RECUPERAR LOS ${ftpHistorico.valor}W*\n`;
+    msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += '*📊 SITUACIÓN ACTUAL*\n';
+    msg += `• FTP actual: *${CONFIG.FTP}W*\n`;
+    msg += `• FTP estimado: *${ftpEstimado}W*\n`;
+    msg += `• Mejor histórico: *${ftpHistorico.valor}W* (${ftpHistorico.fecha})\n`;
+    msg += `• Diferencia: *${diffFTP}W* a recuperar\n\n`;
+    
+    msg += `*📈 PROYECCIÓN*\n`;
+    msg += `• ${proy.mensaje}\n\n`;
 
-  if (diffFTP > 0) {
-    msg += '*📈 PLAN DE 12 SEMANAS*\n';
-    msg += `• Fase 1 (semanas 1-4): 🏗️ Base Aeróbica (Z2-Z3)\n`;
-    msg += `  → 3-4 sesiones/semana, 60-90 min\n`;
-    msg += `  → Incluye fuerza general\n`;
-    msg += `• Fase 2 (semanas 5-8): 📈 Desarrollo FTP (SweetSpot + Tempo)\n`;
-    msg += `  → 1-2 sesiones de calidad/semana\n`;
-    msg += `  → Fuerza Máxima (Semanas 1-3) / Resistencia (2-4)\n`;
-    msg += `• Fase 3 (semanas 9-12): 🎯 Especificidad (VO2 Max + Umbral)\n`;
-    msg += `  → 2 sesiones de calidad/semana\n\n`;
-    msg += '*📊 OBJETIVOS DE CARGA*\n';
-    msg += '• TSS semanal: 450-650\n';
-    msg += '• Horas semanales: 6-9h\n';
-    msg += '• Sesiones de calidad: 2-3/semana\n\n';
-    msg += '*💪 FUERZA RECOMENDADA*\n';
-    msg += '• 2 sesiones/semana (30-45 min)\n';
-    msg += '• Enfoque: Sentadilla, peso muerto, zancadas\n';
-    msg += '• Periodización: 2 semanas Máxima + 2 semanas Resistencia\n\n';
-    msg += `*🎯 META INTERMEDIA (6 semanas)*\n`;
-    msg += `• Objetivo: ${Math.round(CONFIG.FTP + diffFTP * 0.4)}W\n`;
-    msg += '• TSS acumulado: 3000-3500\n';
+    if (diffFTP > 0) {
+      msg += '*📈 PLAN DE 12 SEMANAS*\n';
+      msg += `• Fase 1 (semanas 1-4): 🏗️ Base Aeróbica (Z2-Z3)\n`;
+      msg += `  → 3-4 sesiones/semana, 60-90 min\n`;
+      msg += `  → Incluye fuerza general\n`;
+      msg += `• Fase 2 (semanas 5-8): 📈 Desarrollo FTP (SweetSpot + Tempo)\n`;
+      msg += `  → 1-2 sesiones de calidad/semana\n`;
+      msg += `  → Fuerza Máxima (Semanas 1-3) / Resistencia (2-4)\n`;
+      msg += `• Fase 3 (semanas 9-12): 🎯 Especificidad (VO2 Max + Umbral)\n`;
+      msg += `  → 2 sesiones de calidad/semana\n\n`;
+      msg += '*📊 OBJETIVOS DE CARGA*\n';
+      msg += '• TSS semanal: 450-650\n';
+      msg += '• Horas semanales: 6-9h\n';
+      msg += '• Sesiones de calidad: 2-3/semana\n\n';
+      msg += '*💪 FUERZA RECOMENDADA*\n';
+      msg += '• 2 sesiones/semana (30-45 min)\n';
+      msg += '• Enfoque: Sentadilla, peso muerto, zancadas\n';
+      msg += '• Periodización: 2 semanas Máxima + 2 semanas Resistencia\n\n';
+      msg += `*🎯 META INTERMEDIA (6 semanas)*\n`;
+      msg += `• Objetivo: ${Math.round(CONFIG.FTP + diffFTP * 0.4)}W\n`;
+      msg += '• TSS acumulado: 3000-3500\n';
 
-    if (pesoDiff > 0) {
-      msg += '\n*📉 PESO RECOMENDADO*\n';
-      msg += `• Peso actual: ${CONFIG.WEIGHT_KG}kg\n`;
-      msg += `• Peso objetivo: ${ftpHistorico.peso}kg\n`;
-      msg += `• Diferencia: ${pesoDiff}kg a perder\n`;
-      msg += '   → 0.2-0.3kg/semana de forma saludable\n';
+      if (pesoDiff > 0) {
+        msg += '\n*📉 PESO RECOMENDADO*\n';
+        msg += `• Peso actual: ${CONFIG.WEIGHT_KG}kg\n`;
+        msg += `• Peso objetivo: ${ftpHistorico.peso}kg\n`;
+        msg += `• Diferencia: ${pesoDiff}kg a perder\n`;
+        msg += '   → 0.2-0.3kg/semana de forma saludable\n';
+      }
+
+      msg += '\n*💡 RECOMENDACIONES*\n';
+      msg += '• Usa /plan para ver el entreno de hoy\n';
+      msg += '• Usa /semana para ver el progreso semanal\n';
+      msg += '• La consistencia es la clave\n';
+
+      if (workout && workout.tipo !== 'descanso') {
+        msg += '\n*📊 CÓMO AYUDA EL ENTRENO DE HOY*\n';
+        msg += `• Tipo: ${workout.tipo.toUpperCase()} (Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP)\n`;
+        msg += `• TSS de hoy: ${workout.tssEsperado} → contribuye a la carga crónica (CTL)\n`;
+        msg += `• IF: ${workout.ifEsperado} → calidad del estímulo\n`;
+        msg += `• Objetivo a ${ftpHistorico.valor}W: ${diffFTP > 0 ? '📈 Te acercas cada día' : '🎯 ¡Objetivo alcanzado!'}\n`;
+      }
+    } else {
+      msg += '🎉 *¡Estás en tu mejor momento!*\n';
+      msg += '• Mantén la forma y busca nuevos retos\n';
+      msg += '• Prueba a aumentar el volumen o la intensidad\n';
     }
 
-    msg += '\n*💡 RECOMENDACIONES*\n';
-    msg += '• Usa /plan para ver el entreno de hoy\n';
-    msg += '• Usa /semana para ver el progreso semanal\n';
-    msg += '• La consistencia es la clave\n';
-
-    if (workout && workout.tipo !== 'descanso') {
-      msg += '\n*📊 CÓMO AYUDA EL ENTRENO DE HOY*\n';
-      msg += `• Tipo: ${workout.tipo.toUpperCase()} (Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP)\n`;
-      msg += `• TSS de hoy: ${workout.tssEsperado} → contribuye a la carga crónica (CTL)\n`;
-      msg += `• IF: ${workout.ifEsperado} → calidad del estímulo\n`;
-      msg += `• Objetivo a ${ftpHistorico.valor}W: ${diffFTP > 0 ? '📈 Te acercas cada día' : '🎯 ¡Objetivo alcanzado!'}\n`;
-    }
-  } else {
-    msg += '🎉 *¡Estás en tu mejor momento!*\n';
-    msg += '• Mantén la forma y busca nuevos retos\n';
-    msg += '• Prueba a aumentar el volumen o la intensidad\n';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdObjetivo] ERROR:', err.toString());
+    await sendTelegram(`Error en /objetivo: ${err.message}`);
   }
-
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4445,93 +4490,98 @@ async function cmdObjetivo() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdAprender() {
-  await cargarHistorialCompleto();
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const stats = state.aprendizaje.stats;
-  let msg = '🧠 *WORLD TOUR COACH - DASHBOARD DE APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  
-  if (!stats.suficiente) {
-    msg += '📊 *No tengo suficientes datos aún.*\n\n';
-    msg += '💡 Sigue entrenando y dando feedback con /analizar.\n';
-    msg += `   Necesito mínimo 5 entrenos para empezar a aprender.\n   (Tienes ${stats.total} registrados)\n`;
-    await sendTelegramLong(msg);
-    return;
-  }
-  
-  msg += `📊 *Entrenamientos analizados:* ${stats.total}\n\n`;
-  
-  // ─── SECCIÓN 1: TASA DE ÉXITO POR TIPO ────────────────────────
-  msg += '*📈 TASA DE ÉXITO POR TIPO DE ENTRENO*\n';
-  const tipos = Object.keys(stats.porTipo || {});
-  tipos.sort((a, b) => (stats.porTipo[b].tasa || 0) - (stats.porTipo[a].tasa || 0));
-  tipos.forEach((tipo) => {
-    const d = stats.porTipo[tipo];
-    const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴';
-    msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} entrenos)\n`;
-  });
-  if (tipos.length > 0) {
-    const mejor = tipos[0];
-    const dMejor = stats.porTipo[mejor];
-    msg += `\n*🏆 MEJOR ENTRENO PARA TI*\n• ${mejor.toUpperCase()} con ${dMejor.tasa}% éxito\n`;
-  }
-  
-  // ─── SECCIÓN 2: APRENDIZAJE CONTEXTUAL ────────────────────────
-  const contexto = analizarAprendizajeContextual();
-  if (contexto) {
-    msg += '\n*🕐 APRENDIZAJE CONTEXTUAL*\n';
-    if (contexto.manana.total > 0) {
-      const tasa = Math.round((contexto.manana.exito / contexto.manana.total) * 100);
-      msg += `• Mañana: ${tasa}% éxito (${contexto.manana.total} entrenos)\n`;
+  try {
+    await cargarHistorialCompleto();
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const stats = state.aprendizaje.stats;
+    let msg = '🧠 *WORLD TOUR COACH - DASHBOARD DE APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
+    if (!stats.suficiente) {
+      msg += '📊 *No tengo suficientes datos aún.*\n\n';
+      msg += '💡 Sigue entrenando y dando feedback con /analizar.\n';
+      msg += `   Necesito mínimo 5 entrenos para empezar a aprender.\n   (Tienes ${stats.total} registrados)\n`;
+      await sendTelegramLong(msg);
+      return;
     }
-    if (contexto.tarde.total > 0) {
-      const tasa = Math.round((contexto.tarde.exito / contexto.tarde.total) * 100);
-      msg += `• Tarde: ${tasa}% éxito (${contexto.tarde.total} entrenos)\n`;
-    }
-    if (contexto.conComida.total > 0) {
-      const tasa = Math.round((contexto.conComida.exito / contexto.conComida.total) * 100);
-      msg += `• Con comida previa: ${tasa}% éxito\n`;
-    }
-  }
-  
-  // ─── SECCIÓN 3: ANÁLISIS DE DESVIACIONES ──────────────────────
-  const analisisDesviaciones = await analizarCumplimientoPlan();
-  if (analisisDesviaciones.tieneDesviaciones) {
-    msg += '\n*⚠️ DESVIACIONES RECIENTES*\n';
-    msg += `• Cumplimiento global: ${analisisDesviaciones.porcentajeCumplimiento}%\n`;
-    msg += `• Desviaciones detectadas: ${analisisDesviaciones.desviaciones.length}\n`;
-    msg += `• ${analisisDesviaciones.recomendacion}\n`;
-  } else {
-    msg += '\n*🎯 CUMPLIMIENTO*\n';
-    msg += '• Excelente! Estás cumpliendo al 100% con el plan.\n';
-  }
-  
-  // ─── SECCIÓN 4: PATRONES TEMPORALES ───────────────────────────
-  const patrones = detectarPatronesTemporales();
-  if (patrones. patronesDetectados) {
-    msg += '\n*📅 PATRONES TEMPORALES DETECTADOS*\n';
-    if (patrones.diaSemana && patrones.diaSemana.length > 0) {
-      msg += `• Días con más desviaciones: ${patrones.diaSemana.join(', ')}\n`;
-    }
-    if (patrones.horaPreferida) {
-      msg += `• Hora preferida: ${patrones.horaPreferida}\n`;
-    }
-    if (patrones.conComidaExito) {
-      msg += `• Con comida previa: ${patrones.conComidaExito}% éxito\n`;
-    }
-  }
-  
-  // ─── SECCIÓN 5: RECOMENDACIONES INTELIGENTES ──────────────────
-  const recomendaciones = generarRecomendacionesInteligentes(stats, contexto, patrones);
-  if (recomendaciones.length > 0) {
-    msg += '\n*💡 RECOMENDACIONES INTELIGENTES*\n';
-    recomendaciones.forEach(rec => {
-      msg += `• ${rec}\n`;
+    
+    msg += `📊 *Entrenamientos analizados:* ${stats.total}\n\n`;
+    
+    // ─── SECCIÓN 1: TASA DE ÉXITO POR TIPO ────────────────────────
+    msg += '*📈 TASA DE ÉXITO POR TIPO DE ENTRENO*\n';
+    const tipos = Object.keys(stats.porTipo || {});
+    tipos.sort((a, b) => (stats.porTipo[b].tasa || 0) - (stats.porTipo[a].tasa || 0));
+    tipos.forEach((tipo) => {
+      const d = stats.porTipo[tipo];
+      const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴';
+      msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} entrenos)\n`;
     });
+    if (tipos.length > 0) {
+      const mejor = tipos[0];
+      const dMejor = stats.porTipo[mejor];
+      msg += `\n*🏆 MEJOR ENTRENO PARA TI*\n• ${mejor.toUpperCase()} con ${dMejor.tasa}% éxito\n`;
+    }
+    
+    // ─── SECCIÓN 2: APRENDIZAJE CONTEXTUAL ────────────────────────
+    const contexto = analizarAprendizajeContextual();
+    if (contexto) {
+      msg += '\n*🕐 APRENDIZAJE CONTEXTUAL*\n';
+      if (contexto.manana.total > 0) {
+        const tasa = Math.round((contexto.manana.exito / contexto.manana.total) * 100);
+        msg += `• Mañana: ${tasa}% éxito (${contexto.manana.total} entrenos)\n`;
+      }
+      if (contexto.tarde.total > 0) {
+        const tasa = Math.round((contexto.tarde.exito / contexto.tarde.total) * 100);
+        msg += `• Tarde: ${tasa}% éxito (${contexto.tarde.total} entrenos)\n`;
+      }
+      if (contexto.conComida.total > 0) {
+        const tasa = Math.round((contexto.conComida.exito / contexto.conComida.total) * 100);
+        msg += `• Con comida previa: ${tasa}% éxito\n`;
+      }
+    }
+    
+    // ─── SECCIÓN 3: ANÁLISIS DE DESVIACIONES ──────────────────────
+    const analisisDesviaciones = await analizarCumplimientoPlan();
+    if (analisisDesviaciones.tieneDesviaciones) {
+      msg += '\n*⚠️ DESVIACIONES RECIENTES*\n';
+      msg += `• Cumplimiento global: ${analisisDesviaciones.porcentajeCumplimiento}%\n`;
+      msg += `• Desviaciones detectadas: ${analisisDesviaciones.desviaciones.length}\n`;
+      msg += `• ${analisisDesviaciones.recomendacion}\n`;
+    } else {
+      msg += '\n*🎯 CUMPLIMIENTO*\n';
+      msg += '• Excelente! Estás cumpliendo al 100% con el plan.\n';
+    }
+    
+    // ─── SECCIÓN 4: PATRONES TEMPORALES ───────────────────────────
+    const patrones = detectarPatronesTemporales();
+    if (patrones. patronesDetectados) {
+      msg += '\n*📅 PATRONES TEMPORALES DETECTADOS*\n';
+      if (patrones.diaSemana && patrones.diaSemana.length > 0) {
+        msg += `• Días con más desviaciones: ${patrones.diaSemana.join(', ')}\n`;
+      }
+      if (patrones.horaPreferida) {
+        msg += `• Hora preferida: ${patrones.horaPreferida}\n`;
+      }
+      if (patrones.conComidaExito) {
+        msg += `• Con comida previa: ${patrones.conComidaExito}% éxito\n`;
+      }
+    }
+    
+    // ─── SECCIÓN 5: RECOMENDACIONES INTELIGENTES ──────────────────
+    const recomendaciones = generarRecomendacionesInteligentes(stats, contexto, patrones);
+    if (recomendaciones.length > 0) {
+      msg += '\n*💡 RECOMENDACIONES INTELIGENTES*\n';
+      recomendaciones.forEach(rec => {
+        msg += `• ${rec}\n`;
+      });
+    }
+    
+    msg += '\n📱 *Comandos:* /hoy | /plan | /aprendervalidar | /sync';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdAprender] ERROR:', err.toString());
+    await sendTelegram(`Error en /aprender: ${err.message}`);
   }
-  
-  msg += '\n📱 *Comandos:* /hoy | /plan | /aprendervalidar | /sync';
-  await sendTelegramLong(msg);
 }
 
 // ─── DETECTAR PATRONES TEMPORALES ──────────────────────────────
@@ -4677,64 +4727,69 @@ function generarRecomendacionesInteligentes(stats, contexto, patrones) {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdAprenderValidar() {
-  await cargarHistorialCompleto();
-  const historial = obtenerHistorial();
-  const stats = getEstadisticasAgregadas();
-  let msg = '🧠 *VALIDACIÓN DEL APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📊 MUESTRA DISPONIBLE*\n• Entrenos con feedback: *${historial.length}*\n• Mínimo recomendado: *20*\n`;
-  if (historial.length >= 20) msg += '• ✅ Muestra suficiente para aprendizaje fiable\n';
-  else if (historial.length >= 10) msg += `• 🟡 Muestra parcial (${historial.length}/20) - Mejorable\n`;
-  else msg += `• 🔴 Muestra insuficiente - Necesitas más datos\n`;
-  msg += '\n*📈 PATRONES CONSISTENTES*\n';
-  const tipos = Object.keys(stats.porTipo || {});
-  let consistentes = 0, total = 0;
-  tipos.forEach((tipo) => {
-    const d = stats.porTipo[tipo];
-    if (d.total >= 3) {
-      total++;
-      if (d.tasa >= 60) consistentes++;
-      const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴';
-      msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} ent, ${d.tasa}% tasa)\n`;
+  try {
+    await cargarHistorialCompleto();
+    const historial = obtenerHistorial();
+    const stats = getEstadisticasAgregadas();
+    let msg = '🧠 *VALIDACIÓN DEL APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📊 MUESTRA DISPONIBLE*\n• Entrenos con feedback: *${historial.length}*\n• Mínimo recomendado: *20*\n`;
+    if (historial.length >= 20) msg += '• ✅ Muestra suficiente para aprendizaje fiable\n';
+    else if (historial.length >= 10) msg += `• 🟡 Muestra parcial (${historial.length}/20) - Mejorable\n`;
+    else msg += `• 🔴 Muestra insuficiente - Necesitas más datos\n`;
+    msg += '\n*📈 PATRONES CONSISTENTES*\n';
+    const tipos = Object.keys(stats.porTipo || {});
+    let consistentes = 0, total = 0;
+    tipos.forEach((tipo) => {
+      const d = stats.porTipo[tipo];
+      if (d.total >= 3) {
+        total++;
+        if (d.tasa >= 60) consistentes++;
+        const emoji = d.tasa >= 80 ? '🟢' : d.tasa >= 60 ? '🟡' : '🔴';
+        msg += `• ${emoji} ${tipo.toUpperCase()}: ${d.tasa}% éxito (${d.total} ent, ${d.tasa}% tasa)\n`;
+      }
+    });
+    if (total === 0) msg += '• ⚠️ Aún no hay patrones claros. Sigue entrenando.\n';
+    msg += '\n*🎯 RECOMENDACIONES CONFIABLES*\n';
+    const recomendaciones = [];
+    tipos.forEach((tipo) => {
+      const d = stats.porTipo[tipo];
+      if (d.total >= 5 && d.tasa >= 70) {
+        recomendaciones.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`);
+      }
+    });
+    if (recomendaciones.length > 0) {
+      msg += `• ✅ ${recomendaciones.join(' | ')}\n   → Estos entrenos funcionan consistentemente bien contigo.\n`;
+    } else {
+      msg += `• ⚠️ Aún no hay recomendaciones con alta confianza.\n   → Necesitas más datos (${historial.length}/20).\n`;
     }
-  });
-  if (total === 0) msg += '• ⚠️ Aún no hay patrones claros. Sigue entrenando.\n';
-  msg += '\n*🎯 RECOMENDACIONES CONFIABLES*\n';
-  const recomendaciones = [];
-  tipos.forEach((tipo) => {
-    const d = stats.porTipo[tipo];
-    if (d.total >= 5 && d.tasa >= 70) {
-      recomendaciones.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`);
+    msg += '\n*⚠️ QUÉ NO FUNCIONA (para evitar)*\n';
+    const evitar = [];
+    tipos.forEach((tipo) => {
+      const d = stats.porTipo[tipo];
+      if (d.total >= 3 && d.tasa < 50) {
+        evitar.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`);
+      }
+    });
+    if (evitar.length > 0) {
+      msg += `• 🔴 ${evitar.join(' | ')}\n   → El sistema evitará recomendarte estos tipos.\n`;
+    } else {
+      msg += '• ✅ No hay patrones negativos claros.\n';
     }
-  });
-  if (recomendaciones.length > 0) {
-    msg += `• ✅ ${recomendaciones.join(' | ')}\n   → Estos entrenos funcionan consistentemente bien contigo.\n`;
-  } else {
-    msg += `• ⚠️ Aún no hay recomendaciones con alta confianza.\n   → Necesitas más datos (${historial.length}/20).\n`;
-  }
-  msg += '\n*⚠️ QUÉ NO FUNCIONA (para evitar)*\n';
-  const evitar = [];
-  tipos.forEach((tipo) => {
-    const d = stats.porTipo[tipo];
-    if (d.total >= 3 && d.tasa < 50) {
-      evitar.push(`${tipo.toUpperCase()} (${d.tasa}% éxito)`);
+    msg += '\n*💡 CONSEJO DEL SISTEMA*\n';
+    if (historial.length < 5) {
+      msg += '📊 Sigue entrenando y dando feedback con /analizar.\n   Necesito al menos 20 entrenos para aprender de verdad.\n';
+    } else if (historial.length < 10) {
+      msg += '📊 Buen comienzo. Necesito más datos para ser preciso.\n   Sigue con la consistencia y el feedback.\n';
+    } else if (historial.length < 20) {
+      msg += '📊 Estamos cerca. Sigue así, el sistema cada vez te conoce mejor.\n';
+    } else {
+      msg += '📊 ✅ El sistema te conoce. Las recomendaciones ya son fiables.\n   Sigue confiando en el feedback, ahora el sistema aprende contigo.\n';
     }
-  });
-  if (evitar.length > 0) {
-    msg += `• 🔴 ${evitar.join(' | ')}\n   → El sistema evitará recomendarte estos tipos.\n`;
-  } else {
-    msg += '• ✅ No hay patrones negativos claros.\n';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdAprenderValidar] ERROR:', err.toString());
+    await sendTelegram(`Error en /aprendervalidar: ${err.message}`);
   }
-  msg += '\n*💡 CONSEJO DEL SISTEMA*\n';
-  if (historial.length < 5) {
-    msg += '📊 Sigue entrenando y dando feedback con /analizar.\n   Necesito al menos 20 entrenos para aprender de verdad.\n';
-  } else if (historial.length < 10) {
-    msg += '📊 Buen comienzo. Necesito más datos para ser preciso.\n   Sigue con la consistencia y el feedback.\n';
-  } else if (historial.length < 20) {
-    msg += '📊 Estamos cerca. Sigue así, el sistema cada vez te conoce mejor.\n';
-  } else {
-    msg += '📊 ✅ El sistema te conoce. Las recomendaciones ya son fiables.\n   Sigue confiando en el feedback, ahora el sistema aprende contigo.\n';
-  }
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4742,31 +4797,36 @@ async function cmdAprenderValidar() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdZwo() {
-  const state = await getAthleteStateConAjuste();
-  if (!state || !state.workout || state.workout.tipo === 'descanso') {
-    await sendTelegram('⚠️ No hay entrenamiento activo o es día de descanso.');
-    return;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state || !state.workout || state.workout.tipo === 'descanso') {
+      await sendTelegram('⚠️ No hay entrenamiento activo o es día de descanso.');
+      return;
+    }
+    const w = state.workout;
+    let msg = '📄 *ARCHIVO ZWO PARA RODILLO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*Tipo:* ${w.tipo.toUpperCase()}\n`;
+    msg += `*Estructura:* ${w.reps}x${w.durMin}min\n`;
+    if (w.recSec > 0) msg += `*Recuperación:* ${w.recSec}s\n`;
+    msg += `*Duración total:* ${w.duracionTotalMin}min\n`;
+    msg += `*Cadencia recomendada:* ${w.cadenciaRecomendada || '80-90 rpm'}\n\n`;
+    msg += '*📊 MÉTRICAS*\n';
+    msg += `• TSS: ${w.tssEsperado}\n`;
+    msg += `• IF: ${w.ifEsperado}\n`;
+    msg += `• KJ: ${w.kjEsperados} kJ\n\n`;
+    msg += '*💻 CÓDIGO ZWO*\n```\n';
+    w.bloques.forEach(b => {
+      const emoji2 = b.tipo === 'warmup' ? '🔥' : b.tipo === 'main' ? '⚡' : b.tipo === 'recovery' ? '💨' : '❄️';
+      const cad = b.cadencia ? ` (${b.cadencia})` : '';
+      msg += `${emoji2} ${b.nombre}: ${b.vatios.low}-${b.vatios.high}W${cad} (${b.duracionMin}min)\n`;
+    });
+    msg += '```\n';
+    msg += '\n⚠️ *Ajusta los vatios según tu percepción.*';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdZwo] ERROR:', err.toString());
+    await sendTelegram(`Error en /zwo: ${err.message}`);
   }
-  const w = state.workout;
-  let msg = '📄 *ARCHIVO ZWO PARA RODILLO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*Tipo:* ${w.tipo.toUpperCase()}\n`;
-  msg += `*Estructura:* ${w.reps}x${w.durMin}min\n`;
-  if (w.recSec > 0) msg += `*Recuperación:* ${w.recSec}s\n`;
-  msg += `*Duración total:* ${w.duracionTotalMin}min\n`;
-  msg += `*Cadencia recomendada:* ${w.cadenciaRecomendada || '80-90 rpm'}\n\n`;
-  msg += '*📊 MÉTRICAS*\n';
-  msg += `• TSS: ${w.tssEsperado}\n`;
-  msg += `• IF: ${w.ifEsperado}\n`;
-  msg += `• KJ: ${w.kjEsperados} kJ\n\n`;
-  msg += '*💻 CÓDIGO ZWO*\n```\n';
-  w.bloques.forEach(b => {
-    const emoji2 = b.tipo === 'warmup' ? '🔥' : b.tipo === 'main' ? '⚡' : b.tipo === 'recovery' ? '💨' : '❄️';
-    const cad = b.cadencia ? ` (${b.cadencia})` : '';
-    msg += `${emoji2} ${b.nombre}: ${b.vatios.low}-${b.vatios.high}W${cad} (${b.duracionMin}min)\n`;
-  });
-  msg += '```\n';
-  msg += '\n⚠️ *Ajusta los vatios según tu percepción.*';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4849,25 +4909,30 @@ async function cmdGarmin() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdExportar() {
-  await cargarHistorialCompleto();
-  const historial = obtenerHistorial();
-  if (historial.length === 0) {
-    await sendTelegram('No hay datos para exportar.');
-    return;
+  try {
+    await cargarHistorialCompleto();
+    const historial = obtenerHistorial();
+    if (historial.length === 0) {
+      await sendTelegram('No hay datos para exportar.');
+      return;
+    }
+    let msg = '📊 *EXPORTAR DATOS DEL SISTEMA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📋 RESUMEN DE ${historial.length} ENTRENOS*\n\n`;
+    const data = historial.slice(-10).map((h) => ({
+      fecha: h.fecha,
+      tipo: h.entreno.tipo,
+      rpe: h.feedback.rpe,
+      resultado: h.resultado,
+      peso: h.peso || 1.0,
+      contexto: h.contexto || {}
+    }));
+    msg += '*💾 DATOS COMPLETOS (JSON)*\n```\n' + JSON.stringify(data, null, 2) + '\n```\n';
+    msg += '\n📱 *Usa /debug para ver más datos técnicos.*';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdExportar] ERROR:', err.toString());
+    await sendTelegram(`Error en /exportar: ${err.message}`);
   }
-  let msg = '📊 *EXPORTAR DATOS DEL SISTEMA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📋 RESUMEN DE ${historial.length} ENTRENOS*\n\n`;
-  const data = historial.slice(-10).map((h) => ({
-    fecha: h.fecha,
-    tipo: h.entreno.tipo,
-    rpe: h.feedback.rpe,
-    resultado: h.resultado,
-    peso: h.peso || 1.0,
-    contexto: h.contexto || {}
-  }));
-  msg += '*💾 DATOS COMPLETOS (JSON)*\n```\n' + JSON.stringify(data, null, 2) + '\n```\n';
-  msg += '\n📱 *Usa /debug para ver más datos técnicos.*';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4875,67 +4940,72 @@ async function cmdExportar() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdDensidad() {
-  await cargarHistorialCompleto();
-  const historial = obtenerHistorial();
-  if (historial.length < 3) {
-    await sendTelegram('📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 3 entrenos para calcular densidad.');
-    return;
-  }
-  
-  const ultimos = historial.slice(-10);
-  let tssTotal = 0;
-  let horasTotal = 0;
-  
-  ultimos.forEach(h => {
-    tssTotal += h.entreno?.tss || 0;
-    // Intentar obtener duración de varias fuentes
-    let durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
-    // Si no hay duración pero hay TSS, estimar ~1h por sesión (65 TSS/hora en Z2)
-    if (durMin <= 0 && (h.entreno?.tss || 0) > 0) {
-      durMin = 60;
+  try {
+    await cargarHistorialCompleto();
+    const historial = obtenerHistorial();
+    if (historial.length < 3) {
+      await sendTelegram('📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 3 entrenos para calcular densidad.');
+      return;
     }
-    horasTotal += durMin / 60;
-  });
-  
-  // Si aún no hay horas, usar estimación basada en TSS (65 TSS/hora aprox)
-  if (horasTotal <= 0 && tssTotal > 0) {
-    horasTotal = tssTotal / 65;
+    
+    const ultimos = historial.slice(-10);
+    let tssTotal = 0;
+    let horasTotal = 0;
+    
+    ultimos.forEach(h => {
+      tssTotal += h.entreno?.tss || 0;
+      // Intentar obtener duración de varias fuentes
+      let durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
+      // Si no hay duración pero hay TSS, estimar ~1h por sesión (65 TSS/hora en Z2)
+      if (durMin <= 0 && (h.entreno?.tss || 0) > 0) {
+        durMin = 60;
+      }
+      horasTotal += durMin / 60;
+    });
+    
+    // Si aún no hay horas, usar estimación basada en TSS (65 TSS/hora aprox)
+    if (horasTotal <= 0 && tssTotal > 0) {
+      horasTotal = tssTotal / 65;
+    }
+    
+    const densidad = horasTotal > 0 ? tssTotal / horasTotal : 0;
+    const tssPorSemana = ultimos.length > 0 ? (tssTotal / ultimos.length) * 7 : 0;
+    
+    let msg = '📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📈 DATOS (últimos ${ultimos.length} entrenos)*\n`;
+    msg += `• TSS total: ${Math.round(tssTotal)}\n`;
+    msg += `• Horas totales: ${horasTotal.toFixed(1)}h\n`;
+    msg += `• Densidad: *${densidad.toFixed(1)} TSS/hora*\n\n`;
+    
+    msg += `*📊 INTERPRETACIÓN*\n`;
+    if (densidad < 50) {
+      msg += '• 🟢 Densidad baja - Entrenos de recuperación o base\n';
+    } else if (densidad < 70) {
+      msg += '• 🟡 Densidad moderada - Entrenos equilibrados\n';
+    } else if (densidad < 90) {
+      msg += '• 🟠 Densidad alta - Entrenos intensos\n';
+    } else {
+      msg += '• 🔴 Densidad muy alta - Riesgo de sobreentrenamiento\n';
+    }
+    
+    msg += `\n*📅 PROYECCIÓN SEMANAL*\n`;
+    msg += `• TSS estimado semanal: ${Math.round(tssPorSemana)}\n`;
+    
+    const fase = getFaseActual();
+    const tssObj = getTssObjetivoSemanal();
+    if (tssPorSemana > tssObj * 1.2) {
+      msg += '• ⚠️ Carga semanal alta - Reduce intensidad\n';
+    } else if (tssPorSemana < tssObj * 0.6) {
+      msg += '• 📈 Carga semanal baja - Puedes aumentar\n';
+    } else {
+      msg += '• ✅ Carga semanal óptima\n';
+    }
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdDensidad] ERROR:', err.toString());
+    await sendTelegram(`Error en /densidad: ${err.message}`);
   }
-  
-  const densidad = horasTotal > 0 ? tssTotal / horasTotal : 0;
-  const tssPorSemana = ultimos.length > 0 ? (tssTotal / ultimos.length) * 7 : 0;
-  
-  let msg = '📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📈 DATOS (últimos ${ultimos.length} entrenos)*\n`;
-  msg += `• TSS total: ${Math.round(tssTotal)}\n`;
-  msg += `• Horas totales: ${horasTotal.toFixed(1)}h\n`;
-  msg += `• Densidad: *${densidad.toFixed(1)} TSS/hora*\n\n`;
-  
-  msg += `*📊 INTERPRETACIÓN*\n`;
-  if (densidad < 50) {
-    msg += '• 🟢 Densidad baja - Entrenos de recuperación o base\n';
-  } else if (densidad < 70) {
-    msg += '• 🟡 Densidad moderada - Entrenos equilibrados\n';
-  } else if (densidad < 90) {
-    msg += '• 🟠 Densidad alta - Entrenos intensos\n';
-  } else {
-    msg += '• 🔴 Densidad muy alta - Riesgo de sobreentrenamiento\n';
-  }
-  
-  msg += `\n*📅 PROYECCIÓN SEMANAL*\n`;
-  msg += `• TSS estimado semanal: ${Math.round(tssPorSemana)}\n`;
-  
-  const fase = getFaseActual();
-  const tssObj = getTssObjetivoSemanal();
-  if (tssPorSemana > tssObj * 1.2) {
-    msg += '• ⚠️ Carga semanal alta - Reduce intensidad\n';
-  } else if (tssPorSemana < tssObj * 0.6) {
-    msg += '• 📈 Carga semanal baja - Puedes aumentar\n';
-  } else {
-    msg += '• ✅ Carga semanal óptima\n';
-  }
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4943,45 +5013,50 @@ async function cmdDensidad() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdDebug() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos para debug.'); return; }
-  let msg = '🔧 *DEBUG - DATOS TÉCNICOS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += '*📊 ESTADO*\n';
-  msg += `• TSB: ${state.tsb.toFixed(1)}\n`;
-  msg += `• CTL: ${state.estado.ctl.toFixed(1)}\n`;
-  msg += `• ATL: ${state.estado.atl.toFixed(1)}\n`;
-  msg += `• Readiness: ${state.readiness}/100\n`;
-  msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
-  msg += `• Sueño: ${state.estado.sleepQuality}\n`;
-  msg += `• ACWR: ${state.estado.acwr.toFixed(2)}\n`;
-  msg += `• Temp: ${state.tempActual}°C (HI: ${state.heatIndex}°C)\n`;
-  msg += '\n*📅 FASE*\n';
-  msg += `• Fase: ${getFaseActual().toUpperCase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
-  msg += `• TSS objetivo: ${getTssObjetivoSemanal()}\n`;
-  msg += `• Calidad: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n`;
-  msg += '\n*📈 SEMANA*\n';
-  msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
-  msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
-  msg += '\n*🚴 WORKOUT*\n';
-  if (state.workout) {
-    const w = state.workout;
-    msg += `• Tipo: ${w.tipo.toUpperCase()}\n`;
-    msg += `• Estructura: ${w.reps}x${w.durMin}min\n`;
-    msg += `• IF: ${w.ifEsperado} | TSS: ${w.tssEsperado}\n`;
-    msg += `• Vatios: ${w.vatios.low}-${w.vatios.high}W\n`;
-    msg += `• Cadencia: ${w.cadenciaRecomendada || '80-90 rpm'}\n`;
-    msg += `• Bloques: ${w.bloques.length}\n`;
-  } else {
-    msg += '• Workout: NO GENERADO\n';
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos para debug.'); return; }
+    let msg = '🔧 *DEBUG - DATOS TÉCNICOS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += '*📊 ESTADO*\n';
+    msg += `• TSB: ${state.tsb.toFixed(1)}\n`;
+    msg += `• CTL: ${state.estado.ctl.toFixed(1)}\n`;
+    msg += `• ATL: ${state.estado.atl.toFixed(1)}\n`;
+    msg += `• Readiness: ${state.readiness}/100\n`;
+    msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
+    msg += `• Sueño: ${state.estado.sleepQuality}\n`;
+    msg += `• ACWR: ${state.estado.acwr.toFixed(2)}\n`;
+    msg += `• Temp: ${state.tempActual}°C (HI: ${state.heatIndex}°C)\n`;
+    msg += '\n*📅 FASE*\n';
+    msg += `• Fase: ${getFaseActual().toUpperCase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
+    msg += `• TSS objetivo: ${getTssObjetivoSemanal()}\n`;
+    msg += `• Calidad: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n`;
+    msg += '\n*📈 SEMANA*\n';
+    msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
+    msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
+    msg += '\n*🚴 WORKOUT*\n';
+    if (state.workout) {
+      const w = state.workout;
+      msg += `• Tipo: ${w.tipo.toUpperCase()}\n`;
+      msg += `• Estructura: ${w.reps}x${w.durMin}min\n`;
+      msg += `• IF: ${w.ifEsperado} | TSS: ${w.tssEsperado}\n`;
+      msg += `• Vatios: ${w.vatios.low}-${w.vatios.high}W\n`;
+      msg += `• Cadencia: ${w.cadenciaRecomendada || '80-90 rpm'}\n`;
+      msg += `• Bloques: ${w.bloques.length}\n`;
+    } else {
+      msg += '• Workout: NO GENERADO\n';
+    }
+    msg += '\n*🔧 CONFIG*\n';
+    msg += `• FTP: ${CONFIG.FTP}W\n`;
+    msg += `• Peso: ${CONFIG.WEIGHT_KG}kg\n`;
+    msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
+    msg += `• Objetivo: ${CONFIG.FTP_HISTORICO.valor}W\n`;
+    msg += `• FTP estimado: ${state.ftpEstimado || CONFIG.FTP}W\n`;
+    msg += '\n📱 *Versión: v9.5 (Periodización + Predicción + EF real)*';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdDebug] ERROR:', err.toString());
+    await sendTelegram(`Error en /debug: ${err.message}`);
   }
-  msg += '\n*🔧 CONFIG*\n';
-  msg += `• FTP: ${CONFIG.FTP}W\n`;
-  msg += `• Peso: ${CONFIG.WEIGHT_KG}kg\n`;
-  msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
-  msg += `• Objetivo: ${CONFIG.FTP_HISTORICO.valor}W\n`;
-  msg += `• FTP estimado: ${state.ftpEstimado || CONFIG.FTP}W\n`;
-  msg += '\n📱 *Versión: v9.5 (Periodización + Predicción + EF real)*';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4989,63 +5064,68 @@ async function cmdDebug() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdClima() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const weather = state.datos.weather;
-  if (!weather || typeof weather !== 'object') {
-    await sendTelegram('🌤️ *CLIMA - SIN DATOS*\n━━━━━━━━━━━━━━━━━━━━━━\nNo se pudo obtener información meteorológica.');
-    return;
-  }
-  const temp = weather.temp || 'N/D';
-  const wind = weather.wind || 0;
-  const rain = weather.rain || 0;
-  const desc = weather.description || 'Sin datos';
-  const humidity = weather.humidity || 50;
-  const tempNum = typeof temp === 'number' ? temp : 25;
-  const heatIndex = calcularHeatIndex(tempNum, humidity);
-  const aclimatado = estaAclimatado();
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const weather = state.datos.weather;
+    if (!weather || typeof weather !== 'object') {
+      await sendTelegram('🌤️ *CLIMA - SIN DATOS*\n━━━━━━━━━━━━━━━━━━━━━━\nNo se pudo obtener información meteorológica.');
+      return;
+    }
+    const temp = weather.temp || 'N/D';
+    const wind = weather.wind || 0;
+    const rain = weather.rain || 0;
+    const desc = weather.description || 'Sin datos';
+    const humidity = weather.humidity || 50;
+    const tempNum = typeof temp === 'number' ? temp : 25;
+    const heatIndex = calcularHeatIndex(tempNum, humidity);
+    const aclimatado = estaAclimatado();
 
-  let msg = '*🌤️ CLIMA + FACTOR DE AJUSTE*\n━━━━━━━━━━━━━━━━━━━━━━\n';
-  msg += `📍 ${CONFIG.CITY}\n`;
-  msg += `🌡️ ${temp}°C (Heat Index ${heatIndex}°C)\n`;
-  msg += `💨 Viento: ${wind} km/h\n`;
-  msg += `💧 Humedad: ${humidity}%\n`;
-  msg += `🌧️ Lluvia: ${rain} mm\n`;
-  msg += `☁️ ${desc}\n`;
-  msg += `📊 TSB: ${state.tsb.toFixed(1)}\n`;
-  msg += `🌡️ Aclimatación: ${aclimatado ? '✅ Aclimatado' : `🟡 ${getDiasAclimatados()}/${CONFIG.CLIMA.diasAclimatacion} días`}\n\n`;
+    let msg = '*🌤️ CLIMA + FACTOR DE AJUSTE*\n━━━━━━━━━━━━━━━━━━━━━━\n';
+    msg += `📍 ${CONFIG.CITY}\n`;
+    msg += `🌡️ ${temp}°C (Heat Index ${heatIndex}°C)\n`;
+    msg += `💨 Viento: ${wind} km/h\n`;
+    msg += `💧 Humedad: ${humidity}%\n`;
+    msg += `🌧️ Lluvia: ${rain} mm\n`;
+    msg += `☁️ ${desc}\n`;
+    msg += `📊 TSB: ${state.tsb.toFixed(1)}\n`;
+    msg += `🌡️ Aclimatación: ${aclimatado ? '✅ Aclimatado' : `🟡 ${getDiasAclimatados()}/${CONFIG.CLIMA.diasAclimatacion} días`}\n\n`;
 
-  let recomendacion = '', hidratacion = '';
-  if (heatIndex > 40) {
-    recomendacion = '🔴 *CALOR EXTREMO* - Descanso obligatorio por seguridad';
-    hidratacion = '💧 1L/hora + electrolitos obligatorios';
-  } else if (heatIndex > 38) {
-    recomendacion = `🟠 *CALOR MUY ALTO* - Reduce duración ${aclimatado ? '15%' : '20%'} e intensidad 5%`;
-    hidratacion = '💧 1L/hora + electrolitos';
-  } else if (heatIndex > 35) {
-    recomendacion = `🟡 *CALOR ALTO* - Reduce duración ${aclimatado ? '10%' : '15%'} e intensidad 3%`;
-    hidratacion = '💧 1L/hora + electrolitos';
-  } else if (heatIndex > 32) {
-    recomendacion = `🟡 *CALOR MODERADO* - Reduce duración ${aclimatado ? '5%' : '10%'}`;
-    hidratacion = '💧 750ml/hora + electrolitos';
-  } else if (heatIndex > 28) {
-    recomendacion = `🟢 *CALOR LIGERO* - ${aclimatado ? 'Sin ajustes' : 'Reduce duración 5%'}`;
-    hidratacion = '💧 750ml/hora';
-  } else if (heatIndex < 5) {
-    recomendacion = '❄️ *FRÍO* - Reduce duración 10%\n→ Protege extremidades';
-    hidratacion = '💧 500ml/hora';
-  } else {
-    recomendacion = '✅ *TEMPERATURA IDEAL* - Sin ajustes';
-    hidratacion = '💧 500ml/hora';
-  }
-  
-  if (aclimatado && heatIndex > 28) {
-    recomendacion += '\n✅ *Beneficio:* Estás aclimatado al calor, tu cuerpo responde mejor.';
-  }
+    let recomendacion = '', hidratacion = '';
+    if (heatIndex > 40) {
+      recomendacion = '🔴 *CALOR EXTREMO* - Descanso obligatorio por seguridad';
+      hidratacion = '💧 1L/hora + electrolitos obligatorios';
+    } else if (heatIndex > 38) {
+      recomendacion = `🟠 *CALOR MUY ALTO* - Reduce duración ${aclimatado ? '15%' : '20%'} e intensidad 5%`;
+      hidratacion = '💧 1L/hora + electrolitos';
+    } else if (heatIndex > 35) {
+      recomendacion = `🟡 *CALOR ALTO* - Reduce duración ${aclimatado ? '10%' : '15%'} e intensidad 3%`;
+      hidratacion = '💧 1L/hora + electrolitos';
+    } else if (heatIndex > 32) {
+      recomendacion = `🟡 *CALOR MODERADO* - Reduce duración ${aclimatado ? '5%' : '10%'}`;
+      hidratacion = '💧 750ml/hora + electrolitos';
+    } else if (heatIndex > 28) {
+      recomendacion = `🟢 *CALOR LIGERO* - ${aclimatado ? 'Sin ajustes' : 'Reduce duración 5%'}`;
+      hidratacion = '💧 750ml/hora';
+    } else if (heatIndex < 5) {
+      recomendacion = '❄️ *FRÍO* - Reduce duración 10%\n→ Protege extremidades';
+      hidratacion = '💧 500ml/hora';
+    } else {
+      recomendacion = '✅ *TEMPERATURA IDEAL* - Sin ajustes';
+      hidratacion = '💧 500ml/hora';
+    }
+    
+    if (aclimatado && heatIndex > 28) {
+      recomendacion += '\n✅ *Beneficio:* Estás aclimatado al calor, tu cuerpo responde mejor.';
+    }
 
-  msg += '*📊 FACTOR CLIMA APLICADO*\n' + recomendacion + '\n\n' + hidratacion + '\n\n';
-  msg += '📱 *Comandos:* /plan | /ajuste | /hoy';
-  await sendTelegramLong(msg);
+    msg += '*📊 FACTOR CLIMA APLICADO*\n' + recomendacion + '\n\n' + hidratacion + '\n\n';
+    msg += '📱 *Comandos:* /plan | /ajuste | /hoy';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdClima] ERROR:', err.toString());
+    await sendTelegram(`Error en /clima: ${err.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5053,171 +5133,176 @@ async function cmdClima() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdNutricion() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const n = state.nutricion;
-  const workout = state.workout;
-  const kj = workout?.kjEsperados || 0;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const n = state.nutricion;
+    const workout = state.workout;
+    const kj = workout?.kjEsperados || 0;
 
-  let msg = '*🥗 NUTRICIÓN AVANZADA + RECETAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  
-  // ─── SECCIÓN 1: MÉTRICAS DE DESGASTE ─────────────────────────
-  if (workout && workout.tipo !== 'descanso') {
-    msg += '*📊 MÉTRICAS DE DESGASTE*\n';
-    msg += `• Entreno: ${workout.tipo.toUpperCase()}\n`;
-    msg += `• KJ: *${kj} kJ* (${Math.round(kj * 0.239)} kcal)\n`;
-    msg += `• CH oxidados: *${workout.carbsEsperados}g*\n`;
-    msg += `• TSS: ${workout.tssEsperado} | IF: ${workout.ifEsperado}\n\n`;
-  } else {
-    msg += '*🧘 DÍA DE REPOSO*\n';
-    msg += '• Enfoque: Mantenimiento y recuperación\n';
-    msg += `• Gasto estimado: ~${n.kcalGastoTotal} kcal\n\n`;
-  }
-
-  // ─── SECCIÓN 2: BALANCE ENERGÉTICO ──────────────────────────
-  msg += '*🔥 BALANCE ENERGÉTICO*\n';
-  msg += `• Gasto total día: ~*${n.kcalGastoTotal} kcal*\n`;
-  if (n.haceCalor && n.heatIndex > 30) {
-    msg += `• 🌡️ Calor (HI ${n.heatIndex}°C): +${Math.round(CONFIG.WEIGHT_KG * 0.5 * 0.22 * 4.184)} kcal extra\n`;
-  }
-  msg += '\n';
-
-  // ─── SECCIÓN 3: OBJETIVOS MACRO DIARIOS ──────────────────────
-  msg += '*📊 OBJETIVOS MACRO DIARIOS*\n';
-  if (n.fase) msg += `• 📅 Estrategia: ${n.estrategiaCH || 'Carga completa'} (Fase: ${n.fase})\n`;
-  msg += `• 🍞 Carbohidratos: *${n.chTotalDia}g*\n`;
-  msg += `  → Inmediato post-entreno: ${n.chInmediato}g\n`;
-  if (n.chDuranteEntreno > 0) msg += `  → Durante entreno: ${n.chDuranteEntreno}g\n`;
-  msg += `  → Resto del día: ${n.chCena}g\n`;
-  msg += `• 🍗 Proteína: *${n.protTotalDia}g* (${n.protPost || CONFIG.NUTRICION.proteinaPostMaster}g post-entreno)\n`;
-  msg += `• 🥑 Grasas: *${n.grasaDiaria}g*\n\n`;
-
-  // ─── SECCIÓN 4: SUPLEMENTACIÓN ───────────────────────────────
-  if (n.suplementacion && n.suplementacion.length > 0) {
-    msg += '*💊 SUPLEMENTACIÓN*\n';
-    n.suplementacion.forEach(s => msg += `• ${s}\n`);
-    msg += '\n';
-  }
-
-  // ─── SECCIÓN 5: TIMING POST-ENTRENO ──────────────────────────
-  if (workout && workout.tipo !== 'descanso') {
-    if (n.recomendacionDurante) {
-      msg += '*🚴 DURANTE EL ENTRENO*\n';
-      msg += `• ${n.recomendacionDurante}\n\n`;
-    }
-    msg += '*⏳ TIMING POST-ENTRENO (VENTANA ANABÓLICA)*\n';
-    msg += `🥤 *0-30 min:* ${n.chInmediato}g CH + ${CONFIG.NUTRICION.proteinaPostMaster}g Proteína\n`;
-    msg += `   Ej: Batido recuperador (plátano + leche + suero)\n\n`;
-    msg += `🍽️ *1-2h:* ${n.chCena}g CH + 40g Proteína\n`;
-    msg += `   Ej: Arroz/pasta + pollo/atún + verduras\n\n`;
-  }
-
-  // ─── SECCIÓN 6: HIDRATACIÓN Y ELECTROLITOS ───────────────────
-  msg += '*💧 HIDRATACIÓN*\n';
-  msg += `• ${n.hidratacion}\n`;
-  if (n.sodioMg) {
-    msg += `• 🧂 Sodio: ${n.sodioMg}mg/hora (${(n.sodioMg/1000*0.4).toFixed(1)}g sal)\n`;
-  }
-  msg += '\n';
-
-  // ─── SECCIÓN 7: RECETAS PERSONALIZADAS POR GASTO KJ ─────────
-  msg += '🍳 *RECETAS SEGÚN GASTO ENERGÉTICO*\n';
-  msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
-
-  if (workout && workout.tipo !== 'descanso') {
-    // RECETA 1: Inmediata post-entreno
-    msg += '*🥤 RECUPERACIÓN INMEDIATA (0-30 min)*\n';
-    msg += `Objetivo: ${n.chInmediato}g CH + ${CONFIG.NUTRICION.proteinaPostMaster}g Proteína\n\n`;
-    msg += '*Opción A - Batido:*\n';
-    msg += `• 300ml leche/agua + ${CONFIG.NUTRICION.proteinaPostMaster}g suero\n`;
-    msg += `• 1 plátano (${Math.round(100/4)}g CH)\n`;
-    msg += `• 1 cucharada miel (${Math.round(20/4)}g CH)\n`;
-    msg += `• Hielo al gusto\n\n`;
-    msg += '*Opción B - Snack sólido:*\n';
-    msg += '• 2 rebanadas pan integral + mermelada sin azúcar\n';
-    msg += '• 1 yogur griego natural\n';
-    msg += '• 1 puñado frutos secos (25g)\n\n';
-
-    // RECETA 2: Comida principal (1-2h después)
-    msg += '*🍽️ COMIDA PRINCIPAL (1-2h después)*\n';
-    msg += `Objetivo: ${n.chCena}g CH + 40g Proteína + verduras\n\n`;
+    let msg = '*🥗 NUTRICIÓN AVANZADA + RECETAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     
-    if (kj > 1200) {
-      // Entreno muy intenso
-      msg += '*Alto gasto (>1200 kJ) - Recuperación máxima:*\n';
-      msg += '• 200g arroz integral o pasta (80g CH)\n';
-      msg += '• 200g pechuga pollo/salmón (40g Proteína)\n';
-      msg += '• Brócoli + zanahoria al vapor\n';
-      msg += '• 1 cucharada aceite oliva\n';
-      msg += '• 1 fruta de postre\n\n';
-    } else if (kj > 800) {
-      // Entreno moderado-alto
-      msg += '*Gasto alto (800-1200 kJ) - Recuperación completa:*\n';
-      msg += '• 150g arroz integral o quinoa (60g CH)\n';
-      msg += '• 180g pechuga pollo/atún (35g Proteína)\n';
-      msg += '• Ensalada: tomate, lechuga, aceitunas\n';
-      msg += '• 1 cucharada aceite oliva\n\n';
-    } else if (kj > 500) {
-      // Entreno moderado
-      msg += '*Gasto moderado (500-800 kJ) - Recuperación estándar:*\n';
-      msg += '• 120g patata/arroz (50g CH)\n';
-      msg += '• 150g pescado/pollo (30g Proteína)\n';
-      msg += '• Verduras al vapor o ensalada\n';
-      msg += '• 1 yogur griego\n\n';
+    // ─── SECCIÓN 1: MÉTRICAS DE DESGASTE ─────────────────────────
+    if (workout && workout.tipo !== 'descanso') {
+      msg += '*📊 MÉTRICAS DE DESGASTE*\n';
+      msg += `• Entreno: ${workout.tipo.toUpperCase()}\n`;
+      msg += `• KJ: *${kj} kJ* (${Math.round(kj * 0.239)} kcal)\n`;
+      msg += `• CH oxidados: *${workout.carbsEsperados}g*\n`;
+      msg += `• TSS: ${workout.tssEsperado} | IF: ${workout.ifEsperado}\n\n`;
     } else {
-      // Entreno ligero
-      msg += '*Gasto ligero (<500 kJ) - Mantenimiento:*\n';
-      msg += '• 100g arroz/pasta (40g CH)\n';
-      msg += '• 120g pescado blanco/clara huevo (25g Proteína)\n';
-      msg += '• Ensalada variada\n';
-      msg += '• 1 fruta\n\n';
+      msg += '*🧘 DÍA DE REPOSO*\n';
+      msg += '• Enfoque: Mantenimiento y recuperación\n';
+      msg += `• Gasto estimado: ~${n.kcalGastoTotal} kcal\n\n`;
     }
 
-    // RECETA 3: Snacks
-    msg += '*🍎 SNACKS INTERMEDIOS (cada 3-4h)*\n';
-    msg += '• 1 puñado frutos secos (25g) + 1 fruta\n';
-    msg += '• 1 yogur griego + 1 cucharada avena\n';
-    msg += '• 1 tostada pan integral + queso fresco\n\n';
-  } else {
-    // Día de descanso
-    msg += '*🧘 DÍA DE DESCANSO - Mantenimiento*\n\n';
-    msg += '*Desayuno:*\n';
-    msg += '• Avena (50g) + leche + 1 fruta + café\n\n';
-    msg += '*Comida:*\n';
-    msg += '• 120g arroz/pasta + 150g legumbres/pescado\n';
-    msg += '• Verduras + aceite oliva\n\n';
-    msg += '*Cena:*\n';
-    msg += '• Ensalada completa + 100g queso fresco/tempeh\n';
-    msg += '• 1 pieza fruta\n\n';
-  }
-
-  // ─── SECCIÓN 8: CONSEJOS ESPECÍFICOS ─────────────────────────
-  msg += '💡 *CONSEJOS NUTRICIONALES*\n';
-  if (n.haceCalor && n.heatIndex > 35) {
-    msg += '• 🔴 Prioriza comidas frías y ligeras\n';
-    msg += '• Añade sal a las comidas para reponer electrolitos\n';
-    msg += '• Evita comidas pesadas o muy calóricas\n';
-  } else if (n.haceCalor && n.heatIndex > 30) {
-    msg += '• 🟡 Prefiere comidas con alto contenido en agua\n';
-    msg += '• Hidratación constante, no esperes a tener sed\n';
-    msg += '• Frutas como sandía, naranja, melón\n';
-  } else if (CONFIG.AGE_YEARS > 40) {
-    msg += '• 🧠 Master 40+: Prioriza proteína en cada comida\n';
-    msg += '• Omega-3 diario (3g) para recuperación articular\n';
-    msg += '• Vitamina D (2000 UI) si hay poco sol\n';
-  } else {
-    msg += '• Come cada 3-4 horas para mantener energía\n';
-    msg += '• Prioriza alimentos integrales y proteína magra\n';
-  }
-  // ─── SECCIÓN 9: CONSEJOS EXTRA POR FASE ──────────────────────
-  if (n.consejosExtra && n.consejosExtra.length > 0) {
-    msg += '\n🎯 *CONSEJOS ESPECÍFICOS POR FASE*\n';
-    n.consejosExtra.forEach(consejo => { msg += `• ${consejo}\n`; });
+    // ─── SECCIÓN 2: BALANCE ENERGÉTICO ──────────────────────────
+    msg += '*🔥 BALANCE ENERGÉTICO*\n';
+    msg += `• Gasto total día: ~*${n.kcalGastoTotal} kcal*\n`;
+    if (n.haceCalor && n.heatIndex > 30) {
+      msg += `• 🌡️ Calor (HI ${n.heatIndex}°C): +${Math.round(CONFIG.WEIGHT_KG * 0.5 * 0.22 * 4.184)} kcal extra\n`;
+    }
     msg += '\n';
-  }
 
-  msg += `\n_📊 Edad: ${CONFIG.AGE_YEARS} años | Peso: ${CONFIG.WEIGHT_KG}kg | Fase: ${getNombreFase()}_`;
-  await sendTelegramLong(msg);
+    // ─── SECCIÓN 3: OBJETIVOS MACRO DIARIOS ──────────────────────
+    msg += '*📊 OBJETIVOS MACRO DIARIOS*\n';
+    if (n.fase) msg += `• 📅 Estrategia: ${n.estrategiaCH || 'Carga completa'} (Fase: ${n.fase})\n`;
+    msg += `• 🍞 Carbohidratos: *${n.chTotalDia}g*\n`;
+    msg += `  → Inmediato post-entreno: ${n.chInmediato}g\n`;
+    if (n.chDuranteEntreno > 0) msg += `  → Durante entreno: ${n.chDuranteEntreno}g\n`;
+    msg += `  → Resto del día: ${n.chCena}g\n`;
+    msg += `• 🍗 Proteína: *${n.protTotalDia}g* (${n.protPost || CONFIG.NUTRICION.proteinaPostMaster}g post-entreno)\n`;
+    msg += `• 🥑 Grasas: *${n.grasaDiaria}g*\n\n`;
+
+    // ─── SECCIÓN 4: SUPLEMENTACIÓN ───────────────────────────────
+    if (n.suplementacion && n.suplementacion.length > 0) {
+      msg += '*💊 SUPLEMENTACIÓN*\n';
+      n.suplementacion.forEach(s => msg += `• ${s}\n`);
+      msg += '\n';
+    }
+
+    // ─── SECCIÓN 5: TIMING POST-ENTRENO ──────────────────────────
+    if (workout && workout.tipo !== 'descanso') {
+      if (n.recomendacionDurante) {
+        msg += '*🚴 DURANTE EL ENTRENO*\n';
+        msg += `• ${n.recomendacionDurante}\n\n`;
+      }
+      msg += '*⏳ TIMING POST-ENTRENO (VENTANA ANABÓLICA)*\n';
+      msg += `🥤 *0-30 min:* ${n.chInmediato}g CH + ${CONFIG.NUTRICION.proteinaPostMaster}g Proteína\n`;
+      msg += `   Ej: Batido recuperador (plátano + leche + suero)\n\n`;
+      msg += `🍽️ *1-2h:* ${n.chCena}g CH + 40g Proteína\n`;
+      msg += `   Ej: Arroz/pasta + pollo/atún + verduras\n\n`;
+    }
+
+    // ─── SECCIÓN 6: HIDRATACIÓN Y ELECTROLITOS ───────────────────
+    msg += '*💧 HIDRATACIÓN*\n';
+    msg += `• ${n.hidratacion}\n`;
+    if (n.sodioMg) {
+      msg += `• 🧂 Sodio: ${n.sodioMg}mg/hora (${(n.sodioMg/1000*0.4).toFixed(1)}g sal)\n`;
+    }
+    msg += '\n';
+
+    // ─── SECCIÓN 7: RECETAS PERSONALIZADAS POR GASTO KJ ─────────
+    msg += '🍳 *RECETAS SEGÚN GASTO ENERGÉTICO*\n';
+    msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
+
+    if (workout && workout.tipo !== 'descanso') {
+      // RECETA 1: Inmediata post-entreno
+      msg += '*🥤 RECUPERACIÓN INMEDIATA (0-30 min)*\n';
+      msg += `Objetivo: ${n.chInmediato}g CH + ${CONFIG.NUTRICION.proteinaPostMaster}g Proteína\n\n`;
+      msg += '*Opción A - Batido:*\n';
+      msg += `• 300ml leche/agua + ${CONFIG.NUTRICION.proteinaPostMaster}g suero\n`;
+      msg += `• 1 plátano (${Math.round(100/4)}g CH)\n`;
+      msg += `• 1 cucharada miel (${Math.round(20/4)}g CH)\n`;
+      msg += `• Hielo al gusto\n\n`;
+      msg += '*Opción B - Snack sólido:*\n';
+      msg += '• 2 rebanadas pan integral + mermelada sin azúcar\n';
+      msg += '• 1 yogur griego natural\n';
+      msg += '• 1 puñado frutos secos (25g)\n\n';
+
+      // RECETA 2: Comida principal (1-2h después)
+      msg += '*🍽️ COMIDA PRINCIPAL (1-2h después)*\n';
+      msg += `Objetivo: ${n.chCena}g CH + 40g Proteína + verduras\n\n`;
+      
+      if (kj > 1200) {
+        // Entreno muy intenso
+        msg += '*Alto gasto (>1200 kJ) - Recuperación máxima:*\n';
+        msg += '• 200g arroz integral o pasta (80g CH)\n';
+        msg += '• 200g pechuga pollo/salmón (40g Proteína)\n';
+        msg += '• Brócoli + zanahoria al vapor\n';
+        msg += '• 1 cucharada aceite oliva\n';
+        msg += '• 1 fruta de postre\n\n';
+      } else if (kj > 800) {
+        // Entreno moderado-alto
+        msg += '*Gasto alto (800-1200 kJ) - Recuperación completa:*\n';
+        msg += '• 150g arroz integral o quinoa (60g CH)\n';
+        msg += '• 180g pechuga pollo/atún (35g Proteína)\n';
+        msg += '• Ensalada: tomate, lechuga, aceitunas\n';
+        msg += '• 1 cucharada aceite oliva\n\n';
+      } else if (kj > 500) {
+        // Entreno moderado
+        msg += '*Gasto moderado (500-800 kJ) - Recuperación estándar:*\n';
+        msg += '• 120g patata/arroz (50g CH)\n';
+        msg += '• 150g pescado/pollo (30g Proteína)\n';
+        msg += '• Verduras al vapor o ensalada\n';
+        msg += '• 1 yogur griego\n\n';
+      } else {
+        // Entreno ligero
+        msg += '*Gasto ligero (<500 kJ) - Mantenimiento:*\n';
+        msg += '• 100g arroz/pasta (40g CH)\n';
+        msg += '• 120g pescado blanco/clara huevo (25g Proteína)\n';
+        msg += '• Ensalada variada\n';
+        msg += '• 1 fruta\n\n';
+      }
+
+      // RECETA 3: Snacks
+      msg += '*🍎 SNACKS INTERMEDIOS (cada 3-4h)*\n';
+      msg += '• 1 puñado frutos secos (25g) + 1 fruta\n';
+      msg += '• 1 yogur griego + 1 cucharada avena\n';
+      msg += '• 1 tostada pan integral + queso fresco\n\n';
+    } else {
+      // Día de descanso
+      msg += '*🧘 DÍA DE DESCANSO - Mantenimiento*\n\n';
+      msg += '*Desayuno:*\n';
+      msg += '• Avena (50g) + leche + 1 fruta + café\n\n';
+      msg += '*Comida:*\n';
+      msg += '• 120g arroz/pasta + 150g legumbres/pescado\n';
+      msg += '• Verduras + aceite oliva\n\n';
+      msg += '*Cena:*\n';
+      msg += '• Ensalada completa + 100g queso fresco/tempeh\n';
+      msg += '• 1 pieza fruta\n\n';
+    }
+
+    // ─── SECCIÓN 8: CONSEJOS ESPECÍFICOS ─────────────────────────
+    msg += '💡 *CONSEJOS NUTRICIONALES*\n';
+    if (n.haceCalor && n.heatIndex > 35) {
+      msg += '• 🔴 Prioriza comidas frías y ligeras\n';
+      msg += '• Añade sal a las comidas para reponer electrolitos\n';
+      msg += '• Evita comidas pesadas o muy calóricas\n';
+    } else if (n.haceCalor && n.heatIndex > 30) {
+      msg += '• 🟡 Prefiere comidas con alto contenido en agua\n';
+      msg += '• Hidratación constante, no esperes a tener sed\n';
+      msg += '• Frutas como sandía, naranja, melón\n';
+    } else if (CONFIG.AGE_YEARS > 40) {
+      msg += '• 🧠 Master 40+: Prioriza proteína en cada comida\n';
+      msg += '• Omega-3 diario (3g) para recuperación articular\n';
+      msg += '• Vitamina D (2000 UI) si hay poco sol\n';
+    } else {
+      msg += '• Come cada 3-4 horas para mantener energía\n';
+      msg += '• Prioriza alimentos integrales y proteína magra\n';
+    }
+    // ─── SECCIÓN 9: CONSEJOS EXTRA POR FASE ──────────────────────
+    if (n.consejosExtra && n.consejosExtra.length > 0) {
+      msg += '\n🎯 *CONSEJOS ESPECÍFICOS POR FASE*\n';
+      n.consejosExtra.forEach(consejo => { msg += `• ${consejo}\n`; });
+      msg += '\n';
+    }
+
+    msg += `\n_📊 Edad: ${CONFIG.AGE_YEARS} años | Peso: ${CONFIG.WEIGHT_KG}kg | Fase: ${getNombreFase()}_`;
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdNutricion] ERROR:', err.toString());
+    await sendTelegram(`Error en /nutricion: ${err.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5225,35 +5310,40 @@ async function cmdNutricion() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdFuerza() {
-  console.log('[DEBUG cmdFuerza] Iniciando...');
-  const state = await getAthleteStateConAjuste();
-  console.log('[DEBUG cmdFuerza] state:', state ? '✅' : '❌', state ? `fuerza=${state.fuerza ? 'presente' : 'AUSENTE'}` : 'null');
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const f = state.fuerza;
-  let msg = '🏋️ *RUTINA DE FUERZA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += `*📊 ESTADO:* TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`;
-  msg += `*📅 FASE DE FUERZA:* ${f.faseFuerza || 'Básica'} (Semana ${f.semanaFuerza || 1})\n`;
-  msg += `*🎯 NIVEL:* ${f.nivel} (${f.duracion})\n\n`;
-  if (!f.recomendado) msg += '⚠️ *NO recomendada hoy.* Haz solo movilidad y estiramientos.\n\n';
-  msg += '*💪 EJERCICIOS*\n';
-  f.ejercicios.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
-  msg += `\n💡 *Consejo:* ${f.recomendacion}\n`;
-  if (state.haceCalor && state.heatIndex > 30) {
-    msg += '\n🌡️ *Con calor, alarga descansos y hidrata entre series.*\n';
+  try {
+    console.log('[DEBUG cmdFuerza] Iniciando...');
+    const state = await getAthleteStateConAjuste();
+    console.log('[DEBUG cmdFuerza] state:', state ? '✅' : '❌', state ? `fuerza=${state.fuerza ? 'presente' : 'AUSENTE'}` : 'null');
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const f = state.fuerza;
+    let msg = '🏋️ *RUTINA DE FUERZA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += `*📊 ESTADO:* TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`;
+    msg += `*📅 FASE DE FUERZA:* ${f.faseFuerza || 'Básica'} (Semana ${f.semanaFuerza || 1})\n`;
+    msg += `*🎯 NIVEL:* ${f.nivel} (${f.duracion})\n\n`;
+    if (!f.recomendado) msg += '⚠️ *NO recomendada hoy.* Haz solo movilidad y estiramientos.\n\n';
+    msg += '*💪 EJERCICIOS*\n';
+    f.ejercicios.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
+    msg += `\n💡 *Consejo:* ${f.recomendacion}\n`;
+    if (state.haceCalor && state.heatIndex > 30) {
+      msg += '\n🌡️ *Con calor, alarga descansos y hidrata entre series.*\n';
+    }
+    
+    if (f.movilidadBase && f.movilidadBase.length > 0) {
+      msg += '\n*🧘 MOVILIDAD DIARIA OBLIGATORIA*\n';
+      f.movilidadBase.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
+    }
+    
+    if (f.prevencion && f.prevencion.length > 0) {
+      msg += '\n*🛡️ PREVENCIÓN DE LESIONES*\n';
+      f.prevencion.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
+    }
+    
+    msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /movilidad';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdFuerza] ERROR:', err.toString());
+    await sendTelegram(`Error en /fuerza: ${err.message}`);
   }
-  
-  if (f.movilidadBase && f.movilidadBase.length > 0) {
-    msg += '\n*🧘 MOVILIDAD DIARIA OBLIGATORIA*\n';
-    f.movilidadBase.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
-  }
-  
-  if (f.prevencion && f.prevencion.length > 0) {
-    msg += '\n*🛡️ PREVENCIÓN DE LESIONES*\n';
-    f.prevencion.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
-  }
-  
-  msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /movilidad';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5261,31 +5351,36 @@ async function cmdFuerza() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdMovilidad() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const f = state.fuerza;
-  
-  let msg = '🧘 *RUTINA DE MOVILIDAD DIARIA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += '*📋 EJERCICIOS OBLIGATORIOS (15 min)*\n\n';
-  
-  if (f.movilidadBase && f.movilidadBase.length > 0) {
-    f.movilidadBase.forEach((ej, idx) => {
-      msg += `${idx+1}. ${ej}\n`;
-    });
-  } else {
-    msg += '1. 🦵 Estiramiento isquios: 3x30"\n';
-    msg += '2. 🦵 Estiramiento psoas: 3x30" c/lado\n';
-    msg += '3. 🔄 Movilidad cadera: 3x15 c/lado\n';
-    msg += '4. 🔄 Rotaciones cervicales y dorsales\n';
-    msg += '5. 🧘 Foam rolling: 5 min (isquios, glúteos, dorsales)\n';
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const f = state.fuerza;
+    
+    let msg = '🧘 *RUTINA DE MOVILIDAD DIARIA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += '*📋 EJERCICIOS OBLIGATORIOS (15 min)*\n\n';
+    
+    if (f.movilidadBase && f.movilidadBase.length > 0) {
+      f.movilidadBase.forEach((ej, idx) => {
+        msg += `${idx+1}. ${ej}\n`;
+      });
+    } else {
+      msg += '1. 🦵 Estiramiento isquios: 3x30"\n';
+      msg += '2. 🦵 Estiramiento psoas: 3x30" c/lado\n';
+      msg += '3. 🔄 Movilidad cadera: 3x15 c/lado\n';
+      msg += '4. 🔄 Rotaciones cervicales y dorsales\n';
+      msg += '5. 🧘 Foam rolling: 5 min (isquios, glúteos, dorsales)\n';
+    }
+    
+    msg += '\n*💡 RECOMENDACIONES*\n';
+    msg += '• Haz esto TODOS los días, incluso en días de descanso\n';
+    msg += '• Ideal: por la mañana al despertar o antes de entrenar\n';
+    msg += '• Si sientes dolor agudo, para y consulta a un profesional\n';
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdMovilidad] ERROR:', err.toString());
+    await sendTelegram(`Error en /movilidad: ${err.message}`);
   }
-  
-  msg += '\n*💡 RECOMENDACIONES*\n';
-  msg += '• Haz esto TODOS los días, incluso en días de descanso\n';
-  msg += '• Ideal: por la mañana al despertar o antes de entrenar\n';
-  msg += '• Si sientes dolor agudo, para y consulta a un profesional\n';
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5293,86 +5388,91 @@ async function cmdMovilidad() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdPlan() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  const workout = state.workout;
-  let msg = '*🧠 PLAN DEL DÍA (v9.5)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  
-  msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
-  msg += `• TSS objetivo semanal: ${getTssObjetivoSemanal()} | Actual: ${Math.round(state.estado.weeklyTss)}\n`;
-  msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
-  
-  msg += '*📊 ESTADO*\n';
-  msg += `• TSB: ${state.tsb.toFixed(1)} | Readiness: ${state.readiness}/100\n`;
-  msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
-  msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
-  if (state.haceCalor) msg += `• 🌡️ ${state.tempActual}°C (HI: ${state.heatIndex}°C)\n`;
-  msg += '\n';
-  
-  if (state.horasRecuperacion) {
-    msg += `*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h | Próximo entreno: ${state.proximoEntreno}\n\n`;
-  }
-
-  if (state.restricciones.motivo && state.restricciones.motivo.length > 0) {
-    msg += '*🔒 RESTRICCIONES*\n';
-    state.restricciones.motivo.forEach((m) => { msg += `• ${m}\n`; });
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    const workout = state.workout;
+    let msg = '*🧠 PLAN DEL DÍA (v9.5)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    
+    msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
+    msg += `• TSS objetivo semanal: ${getTssObjetivoSemanal()} | Actual: ${Math.round(state.estado.weeklyTss)}\n`;
+    msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
+    
+    msg += '*📊 ESTADO*\n';
+    msg += `• TSB: ${state.tsb.toFixed(1)} | Readiness: ${state.readiness}/100\n`;
+    msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
+    msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
+    if (state.haceCalor) msg += `• 🌡️ ${state.tempActual}°C (HI: ${state.heatIndex}°C)\n`;
     msg += '\n';
-  }
+    
+    if (state.horasRecuperacion) {
+      msg += `*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h | Próximo entreno: ${state.proximoEntreno}\n\n`;
+    }
 
-  if (workout.tipo === 'descanso') {
-    msg += '*🧘 DESCANSO TOTAL*\n';
-    msg += `Motivo: ${workout.motivo}\n\n`;
-    msg += '💡 *Recomendación:* Movilidad 15\' y foam rolling.';
-  } else {
-    msg += '*🚴 ENTRENO*\n';
-    msg += `• Tipo: *${workout.tipo.toUpperCase()}*\n`;
-    if (workout.reps > 0) {
-      msg += `• Estructura: *${workout.reps}x${workout.durMin} min*\n`;
-      if (workout.recSec > 0) msg += `• Recuperación: *${workout.recSec} seg*\n`;
+    if (state.restricciones.motivo && state.restricciones.motivo.length > 0) {
+      msg += '*🔒 RESTRICCIONES*\n';
+      state.restricciones.motivo.forEach((m) => { msg += `• ${m}\n`; });
+      msg += '\n';
+    }
+
+    if (workout.tipo === 'descanso') {
+      msg += '*🧘 DESCANSO TOTAL*\n';
+      msg += `Motivo: ${workout.motivo}\n\n`;
+      msg += '💡 *Recomendación:* Movilidad 15\' y foam rolling.';
     } else {
-      msg += `• Duración: *${workout.durMin} min*\n`;
-    }
-    msg += `• Vatios: *${workout.vatios.low}-${workout.vatios.high}W*\n`;
-    msg += `• Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP\n`;
-    msg += `• Cadencia: ${workout.cadenciaRecomendada || '80-90 rpm'}\n`;
-    msg += `• Prioridad: *${(workout.prioridad || 'base').replace('_', ' ').toUpperCase()}*\n`;
-    if (workout.notaHidratacion) msg += `• ${workout.notaHidratacion}\n`;
-    msg += '\n';
+      msg += '*🚴 ENTRENO*\n';
+      msg += `• Tipo: *${workout.tipo.toUpperCase()}*\n`;
+      if (workout.reps > 0) {
+        msg += `• Estructura: *${workout.reps}x${workout.durMin} min*\n`;
+        if (workout.recSec > 0) msg += `• Recuperación: *${workout.recSec} seg*\n`;
+      } else {
+        msg += `• Duración: *${workout.durMin} min*\n`;
+      }
+      msg += `• Vatios: *${workout.vatios.low}-${workout.vatios.high}W*\n`;
+      msg += `• Intensidad: ${(workout.intensidadFTP * 100).toFixed(0)}% FTP\n`;
+      msg += `• Cadencia: ${workout.cadenciaRecomendada || '80-90 rpm'}\n`;
+      msg += `• Prioridad: *${(workout.prioridad || 'base').replace('_', ' ').toUpperCase()}*\n`;
+      if (workout.notaHidratacion) msg += `• ${workout.notaHidratacion}\n`;
+      msg += '\n';
 
-    if (workout.bloques && workout.bloques.length > 0) {
-      msg += '*📋 ESTRUCTURA DETALLADA*\n';
-      workout.bloques.forEach(bloque => {
-        const emoji2 = bloque.tipo === 'warmup' ? '🔥' : bloque.tipo === 'main' ? '⚡' : bloque.tipo === 'recovery' ? '💨' : '❄️';
-        const cad = bloque.cadencia ? ` (${bloque.cadencia})` : '';
-        msg += `• ${emoji2} ${bloque.nombre}: ${bloque.vatios.low}-${bloque.vatios.high}W${cad} (${bloque.duracionMin}min)\n`;
+      if (workout.bloques && workout.bloques.length > 0) {
+        msg += '*📋 ESTRUCTURA DETALLADA*\n';
+        workout.bloques.forEach(bloque => {
+          const emoji2 = bloque.tipo === 'warmup' ? '🔥' : bloque.tipo === 'main' ? '⚡' : bloque.tipo === 'recovery' ? '💨' : '❄️';
+          const cad = bloque.cadencia ? ` (${bloque.cadencia})` : '';
+          msg += `• ${emoji2} ${bloque.nombre}: ${bloque.vatios.low}-${bloque.vatios.high}W${cad} (${bloque.duracionMin}min)\n`;
+        });
+      }
+
+      msg += '\n';
+      if (workout.tssEsperado) {
+        msg += '*📈 MÉTRICAS*\n';
+        msg += `• TSS: *${workout.tssEsperado}*\n`;
+        msg += `• IF: *${workout.ifEsperado}*\n`;
+        msg += `• KJ: *${workout.kjEsperados} kJ*\n`;
+        msg += `• CH: *${workout.carbsEsperados}g*\n\n`;
+      }
+    }
+
+    if (state.aprendizaje && state.aprendizaje.probabilidad && workout.tipo !== 'descanso') {
+      const p = state.aprendizaje.probabilidad;
+      msg += `*📊 PROBABILIDAD DE ÉXITO*\n• ${p.nivel} (${p.probabilidad}%)\n\n`;
+    }
+
+    if (state.traza && state.traza.reglasActivadas && state.traza.reglasActivadas.length > 0) {
+      msg += '*🧠 DECISIÓN EXPLICADA*\n';
+      state.traza.reglasActivadas.slice(0, 3).forEach((r) => {
+        msg += `• ${r.nivel}: ${r.regla} → ${r.accion}\n`;
       });
+      msg += '\n';
     }
 
-    msg += '\n';
-    if (workout.tssEsperado) {
-      msg += '*📈 MÉTRICAS*\n';
-      msg += `• TSS: *${workout.tssEsperado}*\n`;
-      msg += `• IF: *${workout.ifEsperado}*\n`;
-      msg += `• KJ: *${workout.kjEsperados} kJ*\n`;
-      msg += `• CH: *${workout.carbsEsperados}g*\n\n`;
-    }
+    msg += '📱 *Comandos:* /zwo | /garmin | /clima | /nutricion | /traza';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdPlan] ERROR:', err.toString());
+    await sendTelegram(`Error en /plan: ${err.message}`);
   }
-
-  if (state.aprendizaje && state.aprendizaje.probabilidad && workout.tipo !== 'descanso') {
-    const p = state.aprendizaje.probabilidad;
-    msg += `*📊 PROBABILIDAD DE ÉXITO*\n• ${p.nivel} (${p.probabilidad}%)\n\n`;
-  }
-
-  if (state.traza && state.traza.reglasActivadas && state.traza.reglasActivadas.length > 0) {
-    msg += '*🧠 DECISIÓN EXPLICADA*\n';
-    state.traza.reglasActivadas.slice(0, 3).forEach((r) => {
-      msg += `• ${r.nivel}: ${r.regla} → ${r.accion}\n`;
-    });
-    msg += '\n';
-  }
-
-  msg += '📱 *Comandos:* /zwo | /garmin | /clima | /nutricion | /traza';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5380,41 +5480,46 @@ async function cmdPlan() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdEstado() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  let msg = '*📊 ESTADO COMPLETO v9.5*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  msg += '*💪 MÉTRICAS DE CARGA*\n';
-  msg += `• CTL: ${state.estado.ctl.toFixed(1)}\n`;
-  msg += `• ATL: ${state.estado.atl.toFixed(1)}\n`;
-  msg += `• TSB: *${state.tsb.toFixed(1)}* ${state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴'}\n`;
-  msg += `• Readiness: *${state.readiness}/100* ${state.readiness > 70 ? '🟢' : state.readiness > 50 ? '🟡' : '🔴'}\n\n`;
-  msg += '*😴 RECUPERACIÓN*\n';
-  msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
-  msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
-  msg += `• Pasos: ${state.estado.pasos.toLocaleString()}\n`;
-  if (state.horasRecuperacion) {
-    msg += `• ⏰ Recuperación: ${state.horasRecuperacion}h\n`;
-  }
-  msg += '\n*📈 CARGA SEMANAL*\n';
-  msg += `• TSS: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
-  msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
-  msg += `• ACWR: ${state.estado.acwr.toFixed(2)}${state.estado.acwr > 1.3 ? ' ⚠️ ALTO' : ' ✅ OK'}\n\n`;
-  
-  msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
-  msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    let msg = '*📊 ESTADO COMPLETO v9.5*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    msg += '*💪 MÉTRICAS DE CARGA*\n';
+    msg += `• CTL: ${state.estado.ctl.toFixed(1)}\n`;
+    msg += `• ATL: ${state.estado.atl.toFixed(1)}\n`;
+    msg += `• TSB: *${state.tsb.toFixed(1)}* ${state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴'}\n`;
+    msg += `• Readiness: *${state.readiness}/100* ${state.readiness > 70 ? '🟢' : state.readiness > 50 ? '🟡' : '🔴'}\n\n`;
+    msg += '*😴 RECUPERACIÓN*\n';
+    msg += `• HRV: ${state.estado.hrv || 'N/D'}\n`;
+    msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
+    msg += `• Pasos: ${state.estado.pasos.toLocaleString()}\n`;
+    if (state.horasRecuperacion) {
+      msg += `• ⏰ Recuperación: ${state.horasRecuperacion}h\n`;
+    }
+    msg += '\n*📈 CARGA SEMANAL*\n';
+    msg += `• TSS: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
+    msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
+    msg += `• ACWR: ${state.estado.acwr.toFixed(2)}${state.estado.acwr > 1.3 ? ' ⚠️ ALTO' : ' ✅ OK'}\n\n`;
+    
+    msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
+    msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
 
-  if (state.haceCalor) {
-    msg += '*🌡️ CLIMA*\n';
-    msg += `• ${state.tempActual}°C (Heat Index ${state.heatIndex}°C)\n`;
-    msg += `• Aclimatación: ${estaAclimatado() ? '✅ Aclimatado' : `${getDiasAclimatados()}/${CONFIG.CLIMA.diasAclimatacion} días`}\n\n`;
+    if (state.haceCalor) {
+      msg += '*🌡️ CLIMA*\n';
+      msg += `• ${state.tempActual}°C (Heat Index ${state.heatIndex}°C)\n`;
+      msg += `• Aclimatación: ${estaAclimatado() ? '✅ Aclimatado' : `${getDiasAclimatados()}/${CONFIG.CLIMA.diasAclimatacion} días`}\n\n`;
+    }
+    
+    msg += `*🚴 FTP ESTIMADO:* ${state.ftpEstimado || CONFIG.FTP}W\n`;
+    if (state.proyeccion && !state.proyeccion.alcanzado) {
+      msg += `• ${state.proyeccion.mensaje}\n`;
+    }
+    
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdEstado] ERROR:', err.toString());
+    await sendTelegram(`Error en /estado: ${err.message}`);
   }
-  
-  msg += `*🚴 FTP ESTIMADO:* ${state.ftpEstimado || CONFIG.FTP}W\n`;
-  if (state.proyeccion && !state.proyeccion.alcanzado) {
-    msg += `• ${state.proyeccion.mensaje}\n`;
-  }
-  
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5422,12 +5527,17 @@ async function cmdEstado() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdConsejo() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  let msg = '🧠 *CONSEJO DEL DÍA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  state.consejo.forEach((c) => { msg += `${c}\n\n`; });
-  msg += '📱 *Comandos:* /hoy | /plan | /estado';
-  await sendTelegramLong(msg);
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    let msg = '🧠 *CONSEJO DEL DÍA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    state.consejo.forEach((c) => { msg += `${c}\n\n`; });
+    msg += '📱 *Comandos:* /hoy | /plan | /estado';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdConsejo] ERROR:', err.toString());
+    await sendTelegram(`Error en /consejo: ${err.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5435,40 +5545,45 @@ async function cmdConsejo() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdResumen() {
-  const state = await getAthleteStateConAjuste();
-  if (!state) { await sendTelegram('Sin datos.'); return; }
-  let msg = '📋 *RESUMEN EJECUTIVO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-  const emoji = state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴';
-  msg += `*📊 ESTADO:* ${emoji} TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`;
-  msg += `*😴 SUEÑO:* ${state.estado.sleepQuality === 1 ? 'Malo' : state.estado.sleepQuality === 2 ? 'Regular' : 'Bueno'}\n`;
-  msg += `*🌡️ CLIMA:* ${state.tempActual}°C (HI: ${state.heatIndex}°C)${state.haceCalor ? ' 🔥' : ''}\n`;
-  msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()})\n`;
-  
-  if (state.workout && state.workout.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
-  else if (state.decision.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
-  else {
-    const w = state.workout || state.entreno;
-    msg += '*🚴 PLAN:* ' + (w.tipo || w.tipo || '').toUpperCase();
-    if (w.reps > 0) msg += ` ${w.reps}x${w.durMin}min`;
-    else if (w.durMin) msg += ` ${w.durMin}min`;
-    msg += ` | Cadencia: ${w.cadenciaRecomendada || '80-90 rpm'}\n`;
+  try {
+    const state = await getAthleteStateConAjuste();
+    if (!state) { await sendTelegram('Sin datos.'); return; }
+    let msg = '📋 *RESUMEN EJECUTIVO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+    const emoji = state.tsb > 0 ? '🟢' : state.tsb > -10 ? '🟡' : '🔴';
+    msg += `*📊 ESTADO:* ${emoji} TSB ${state.tsb.toFixed(1)} | Readiness ${state.readiness}/100\n`;
+    msg += `*😴 SUEÑO:* ${state.estado.sleepQuality === 1 ? 'Malo' : state.estado.sleepQuality === 2 ? 'Regular' : 'Bueno'}\n`;
+    msg += `*🌡️ CLIMA:* ${state.tempActual}°C (HI: ${state.heatIndex}°C)${state.haceCalor ? ' 🔥' : ''}\n`;
+    msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()})\n`;
+    
+    if (state.workout && state.workout.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
+    else if (state.decision.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
+    else {
+      const w = state.workout || state.entreno;
+      msg += '*🚴 PLAN:* ' + (w.tipo || w.tipo || '').toUpperCase();
+      if (w.reps > 0) msg += ` ${w.reps}x${w.durMin}min`;
+      else if (w.durMin) msg += ` ${w.durMin}min`;
+      msg += ` | Cadencia: ${w.cadenciaRecomendada || '80-90 rpm'}\n`;
+    }
+    
+    if (state.ftpEstimado) {
+      msg += `*🚴 FTP estimado:* ${state.ftpEstimado}W\n`;
+    }
+    
+    if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') {
+      const p = state.aprendizaje.probabilidad;
+      msg += `\n📊 *Probabilidad de éxito:* ${p.nivel} (${p.probabilidad}%)\n`;
+    }
+    
+    if (state.horasRecuperacion) {
+      msg += `\n⏰ *Recuperación:* ${state.horasRecuperacion}h`;
+    }
+    
+    msg += '\n\n📱 *Comandos:* /hoy | /plan | /estado | /clima';
+    await sendTelegramLong(msg);
+  } catch (err) {
+    console.log('[cmdResumen] ERROR:', err.toString());
+    await sendTelegram(`Error en /resumen: ${err.message}`);
   }
-  
-  if (state.ftpEstimado) {
-    msg += `*🚴 FTP estimado:* ${state.ftpEstimado}W\n`;
-  }
-  
-  if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') {
-    const p = state.aprendizaje.probabilidad;
-    msg += `\n📊 *Probabilidad de éxito:* ${p.nivel} (${p.probabilidad}%)\n`;
-  }
-  
-  if (state.horasRecuperacion) {
-    msg += `\n⏰ *Recuperación:* ${state.horasRecuperacion}h`;
-  }
-  
-  msg += '\n\n📱 *Comandos:* /hoy | /plan | /estado | /clima';
-  await sendTelegramLong(msg);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5476,7 +5591,12 @@ async function cmdResumen() {
 // ═══════════════════════════════════════════════════════════════
 
 async function cmdAjuste() {
-  await sendTelegram('🌡️ *FACTOR CLIMA APLICADO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nUsa /clima para ver el factor de ajuste completo.');
+  try {
+    await sendTelegram('🌡️ *FACTOR CLIMA APLICADO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nUsa /clima para ver el factor de ajuste completo.');
+  } catch (err) {
+    console.log('[cmdAjuste] ERROR:', err.toString());
+    await sendTelegram(`Error en /ajuste: ${err.message}`);
+  }
 }
 // ═══════════════════════════════════════════════════════════════
 // 📋 COMANDO SYNC - Sincronizar con Supabase + CEREBRO
