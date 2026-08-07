@@ -6293,118 +6293,126 @@ async function guardarAprendizajeDesviacion(desviacion, categoria, motivo) {
 // ═══════════════════════════════════════════════════════════════
 
 async function procesarMensajeFeedback(texto, chatId) {
-  const raw = getUserProperty(FEEDBACK_KEY);
-  if (!raw) return false;
+  try {
+    const raw = getUserProperty(FEEDBACK_KEY);
+    if (!raw) return false;
 
-  let estado = {};
-  try { estado = JSON.parse(raw); } catch(e) { return false; }
-  if (!estado.esperando) return false;
+    let estado = {};
+    try { estado = JSON.parse(raw); } catch(e) { return false; }
+    if (!estado.esperando) return false;
 
-  const paso = estado.paso || 1;
-  const t = texto.toLowerCase().trim();
+    const paso = estado.paso || 1;
+    const t = texto.toLowerCase().trim();
 
-  switch (paso) {
-    case 1:
-      estado.rpe = Math.min(10, Math.max(1, parseInt(t) || 5));
-      estado.paso = 2;
-      await sendTelegram('*2/7 - Cumpliste los vatios objetivo?*\nResponde: si / parcial / no');
-      break;
-    case 2:
-      estado.watts = (t === 'si') ? 'si' : (t === 'parcial' ? 'parcial' : 'no');
-      estado.paso = 3;
-      await sendTelegram('*3/7 - Sensacion de piernas (1-3)*\n1 = pesadas · 2 = normales · 3 = ligeras');
-      break;
-    case 3:
-      estado.piernas = Math.min(3, Math.max(1, parseInt(t) || 2));
-      estado.paso = 4;
-      await sendTelegram('*4/7 - Estres / carga laboral hoy (1-3)*\n1 = bajo · 2 = normal · 3 = alto');
-      break;
-    case 4:
-      estado.stress = Math.min(3, Math.max(1, parseInt(t) || 2));
-      estado.paso = 5;
-      await sendTelegram('*5/7 - Calidad del sueno anoche (1-3)*\n1 = mal · 2 = regular · 3 = bien');
-      break;
-    case 5:
-      estado.sleep = Math.min(3, Math.max(1, parseInt(t) || 2));
-      estado.paso = 6;
-      await sendTelegram('*6/7 - ¿A qué hora entrenaste?*\nResponde: mañana / tarde / noche');
-      break;
-    case 6:
-      estado.momentoDia = t;
-      estado.paso = 7;
-      await sendTelegram('*7/7 - ¿Comiste algo antes de entrenar?*\nResponde: si / no / parcial');
-      break;
-    case 7:
-      estado.comioAntes = t;
-      
-      const datos = await obtenerDatosCompletos();
-      const hoy = datos ? datos.today : {};
-      const ctl = safeNum(hoy.ctl, 50);
-      const atl = safeNum(hoy.atl, 50);
-      const tsb = ctl - atl;
-      const acwr = calcularACWR(datos.activities || []);
+    switch (paso) {
+      case 1:
+        estado.rpe = Math.min(10, Math.max(1, parseInt(t) || 5));
+        estado.paso = 2;
+        await sendTelegram('*2/7 - Cumpliste los vatios objetivo?*\nResponde: si / parcial / no');
+        break;
+      case 2:
+        estado.watts = (t === 'si') ? 'si' : (t === 'parcial' ? 'parcial' : 'no');
+        estado.paso = 3;
+        await sendTelegram('*3/7 - Sensacion de piernas (1-3)*\n1 = pesadas · 2 = normales · 3 = ligeras');
+        break;
+      case 3:
+        estado.piernas = Math.min(3, Math.max(1, parseInt(t) || 2));
+        estado.paso = 4;
+        await sendTelegram('*4/7 - Estres / carga laboral hoy (1-3)*\n1 = bajo · 2 = normal · 3 = alto');
+        break;
+      case 4:
+        estado.stress = Math.min(3, Math.max(1, parseInt(t) || 2));
+        estado.paso = 5;
+        await sendTelegram('*5/7 - Calidad del sueno anoche (1-3)*\n1 = mal · 2 = regular · 3 = bien');
+        break;
+      case 5:
+        estado.sleep = Math.min(3, Math.max(1, parseInt(t) || 2));
+        estado.paso = 6;
+        await sendTelegram('*6/7 - ¿A qué hora entrenaste?*\nResponde: mañana / tarde / noche');
+        break;
+      case 6:
+        estado.momentoDia = t;
+        estado.paso = 7;
+        await sendTelegram('*7/7 - ¿Comiste algo antes de entrenar?*\nResponde: si / no / parcial');
+        break;
+      case 7:
+        estado.comioAntes = t;
+        
+        const datos = await obtenerDatosCompletos();
+        const hoy = datos ? datos.today : {};
+        const ctl = safeNum(hoy.ctl, 50);
+        const atl = safeNum(hoy.atl, 50);
+        const tsb = ctl - atl;
+        const acwr = calcularACWR(datos.activities || []);
 
-      const readiness = calcularReadiness(estado.rpe, estado.piernas, estado.stress, estado.sleep, tsb, atl, ctl, estado.watts);
-      const fatigaOculta = calcularFatigaOculta(estado.rpe, tsb, estado.piernas, estado.watts);
-      const semaforo = getSemaforo(readiness);
-      const zonaManana = calcularZonaRecomendada(readiness);
-      const explicacion = buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr.ratio);
+        const readiness = calcularReadiness(estado.rpe, estado.piernas, estado.stress, estado.sleep, tsb, atl, ctl, estado.watts);
+        const fatigaOculta = calcularFatigaOculta(estado.rpe, tsb, estado.piernas, estado.watts);
+        const semaforo = getSemaforo(readiness);
+        const zonaManana = calcularZonaRecomendada(readiness);
+        const explicacion = buildExplicacionStaff(readiness, fatigaOculta, estado, tsb, acwr.ratio);
 
-      let msg =
-        '━━━━━━━━━━━━━━━━━━━━━━\n' +
-        'ANALISIS DEL STAFF\n' +
-        '━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-        '*Estado general*\n' +
-        `CTL: ${ctl.toFixed(1)}  ATL: ${atl.toFixed(1)}  TSB: ${tsb.toFixed(1)}\n` +
-        `ACWR: ${acwr.ratio.toFixed(2)}\n\n` +
-        `*Readiness: ${readiness}/100*\n` +
-        `${semaforo}\n` +
-        `Fatiga oculta: ${fatigaOculta}\n` +
-        `Carga laboral: ${buildTextoStress(estado.stress)}\n` +
-        `Sueno: ${buildTextoSleep(estado.sleep)}\n` +
-        `Momento: ${estado.momentoDia || 'N/A'}\n` +
-        `Comida previa: ${estado.comioAntes || 'N/A'}\n\n` +
-        `*Recomendacion manana:*\n${zonaManana}\n\n` +
-        `*Staff:*\n${explicacion}`;
+        let msg =
+          '━━━━━━━━━━━━━━━━━━━━━━\n' +
+          'ANALISIS DEL STAFF\n' +
+          '━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+          '*Estado general*\n' +
+          `CTL: ${ctl.toFixed(1)}  ATL: ${atl.toFixed(1)}  TSB: ${tsb.toFixed(1)}\n` +
+          `ACWR: ${acwr.ratio.toFixed(2)}\n\n` +
+          `*Readiness: ${readiness}/100*\n` +
+          `${semaforo}\n` +
+          `Fatiga oculta: ${fatigaOculta}\n` +
+          `Carga laboral: ${buildTextoStress(estado.stress)}\n` +
+          `Sueno: ${buildTextoSleep(estado.sleep)}\n` +
+          `Momento: ${estado.momentoDia || 'N/A'}\n` +
+          `Comida previa: ${estado.comioAntes || 'N/A'}\n\n` +
+          `*Recomendacion manana:*\n${zonaManana}\n\n` +
+          `*Staff:*\n${explicacion}`;
 
-      await sendTelegramLong(msg);
+        await sendTelegramLong(msg);
 
-      const entrenoActual = {
-        tipo: estado.tipo || 'desconocido',
-        reps: 0,
-        durMin: 0,
-        intensidad: 0,
-        tss: estado.tss || 0,
-        tsb: tsb,
-        readiness: readiness,
-        temp: datos && datos.weather ? datos.weather.temp || 25 : 25,
-        sleepQuality: estado.sleep || 2,
-        hrv: datos && datos.today ? safeNum(datos.today.hrv, 50) : 50
-      };
+        const entrenoActual = {
+          tipo: estado.tipo || 'desconocido',
+          reps: 0,
+          durMin: 0,
+          intensidad: 0,
+          tss: estado.tss || 0,
+          tsb: tsb,
+          readiness: readiness,
+          temp: datos && datos.weather ? datos.weather.temp || 25 : 25,
+          sleepQuality: estado.sleep || 2,
+          hrv: datos && datos.today ? safeNum(datos.today.hrv, 50) : 50
+        };
 
-      const feedback = {
-        rpe: estado.rpe,
-        watts: estado.watts,
-        piernas: estado.piernas,
-        stress: estado.stress,
-        sleep: estado.sleep
-      };
+        const feedback = {
+          rpe: estado.rpe,
+          watts: estado.watts,
+          piernas: estado.piernas,
+          stress: estado.stress,
+          sleep: estado.sleep
+        };
 
-      const contexto = {
-        momentoDia: estado.momentoDia || 'desconocido',
-        comioAntes: estado.comioAntes || 'no',
-        hora: new Date().getHours().toString()
-      };
+        const contexto = {
+          momentoDia: estado.momentoDia || 'desconocido',
+          comioAntes: estado.comioAntes || 'no',
+          hora: new Date().getHours().toString()
+        };
 
-      guardarEntrenoHistorial(entrenoActual, feedback, contexto);  // ← MODIFICADO
-      guardarFeedbackContextual(feedback, contexto);
+        guardarEntrenoHistorial(entrenoActual, feedback, contexto);  // ← MODIFICADO
+        guardarFeedbackContextual(feedback, contexto);
 
-      deleteUserProperty(FEEDBACK_KEY);
-      return true;
+        deleteUserProperty(FEEDBACK_KEY);
+        return true;
+    }
+
+    setUserProperty(FEEDBACK_KEY, JSON.stringify(estado));
+    return true;
+  } catch (err) {
+    console.log('[procesarMensajeFeedback] ERROR:', err.toString());
+    // Limpiar estado para no dejar el flujo corrupto
+    deleteUserProperty(FEEDBACK_KEY);
+    await sendTelegram(`❌ Error en el flujo de feedback: ${err.message}`);
+    return true;
   }
-
-  setUserProperty(FEEDBACK_KEY, JSON.stringify(estado));
-  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
