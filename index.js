@@ -534,6 +534,36 @@ function sleep(ms) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 🕐 FETCH CON TIMEOUT (AbortController)
+// ═══════════════════════════════════════════════════════════════
+const TIMEOUTS = {
+  OPENROUTER: 45000,   // 45s - La IA puede tardar
+  INTERVALS: 15000,    // 15s - Intervals/Garmin
+  WEATHER: 8000,       // 8s  - OpenWeatherMap
+  TELEGRAM: 10000      // 10s - Telegram API
+};
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error(`Timeout (${timeoutMs}ms) en ${url.substring(0, 50)}...`);
+    }
+    throw err;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 🆕 FUNCIONES DE PERIODIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 
@@ -833,25 +863,21 @@ INSTRUCCIONES:
       try {
         console.log(`[OpenRouter] 📤 Intentando modelo ${i+1}/${maxModelos}: ${modelo}`);
         
-        const fetchWithTimeout = Promise.race([
-          fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
-              'HTTP-Referer': 'https://worldtourcoach.com',
-              'X-Title': 'World Tour Coach'
-            },
-            body: JSON.stringify({
-              model: modelo,
-              messages: messages,
-              max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
-              temperature: CONFIG.OPENROUTER.TEMPERATURE
-            })
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 10s')), 10000))
-        ]);
-        const response = await fetchWithTimeout;
+        const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${CONFIG.OPENROUTER.API_KEY}`,
+            'HTTP-Referer': 'https://worldtourcoach.com',
+            'X-Title': 'World Tour Coach'
+          },
+          body: JSON.stringify({
+            model: modelo,
+            messages: messages,
+            max_tokens: CONFIG.OPENROUTER.MAX_TOKENS,
+            temperature: CONFIG.OPENROUTER.TEMPERATURE
+          })
+        }, TIMEOUTS.OPENROUTER);
 
         console.log(`[OpenRouter] 📥 Response status (${modelo}):`, response.status);
 
@@ -968,7 +994,7 @@ async function sendTelegram(text) {
   try {
     console.log(`[sendTelegram] 📤 Enviando mensaje (${safeText.length} chars)...`);
     
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -977,7 +1003,7 @@ async function sendTelegram(text) {
         parse_mode: 'Markdown',
         disable_web_page_preview: true,
       })
-    });
+    }, TIMEOUTS.TELEGRAM);
 
     const responseText = await response.text();
     console.log(`[sendTelegram] 📥 Response status: ${response.status}`);
@@ -985,14 +1011,14 @@ async function sendTelegram(text) {
 
     if (!response.ok) {
       console.log('[sendTelegram] ⚠️ Primer intento falló, reintentando sin Markdown...');
-      const response2 = await fetch(url, {
+      const response2 = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: CONFIG.CHAT_ID,
           text: safeText.replace(/[*_`\[\]]/g, ''),
         })
-      });
+      }, TIMEOUTS.TELEGRAM);
       
       const response2Text = await response2.text();
       console.log(`[sendTelegram] 📥 Segundo intento status: ${response2.status}`);
@@ -1053,10 +1079,10 @@ async function fetchIntervals(endpoint) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = API_BASE + endpoint;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'GET',
     headers: { 'Authorization': `Basic ${auth}` }
-  });
+  }, TIMEOUTS.INTERVALS);
 
   if (!response.ok) throw new Error(`Intervals API HTTP ${response.status}`);
   return response.json();
@@ -1066,14 +1092,14 @@ async function postIntervals(endpoint, payload) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = API_BASE + endpoint;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Authorization': `Basic ${auth}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
-  });
+  }, TIMEOUTS.INTERVALS);
 
   if (!response.ok && response.status !== 201) {
     throw new Error(`Intervals API POST HTTP ${response.status}`);
@@ -1086,10 +1112,10 @@ async function fetchIntervalsActivity(activityId) {
   const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
   const url = `https://intervals.icu/api/v1/activity/${activityId}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'GET',
     headers: { 'Authorization': `Basic ${auth}` }
-  });
+  }, TIMEOUTS.INTERVALS);
 
   if (!response.ok) throw new Error(`Intervals API HTTP ${response.status}`);
   return response.json();
@@ -1112,10 +1138,10 @@ async function fetchPowerCurve(activityId) {
   try {
     const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
     const url = `https://intervals.icu/api/v1/activity/${activityId}/powercurve`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: { 'Authorization': `Basic ${auth}` }
-    });
+    }, TIMEOUTS.INTERVALS);
     if (!response.ok) return null;
     return response.json();
   } catch (e) {
@@ -1128,7 +1154,7 @@ async function fetchPowerCurve(activityId) {
 async function fetchWeather() {
   try {
     const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CONFIG.CITY)}&appid=${CONFIG.WEATHER_API_KEY}&units=metric&lang=es`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url, {}, TIMEOUTS.WEATHER);
     if (!response.ok) return null;
     const data = await response.json();
     return safeWeatherData(data);
