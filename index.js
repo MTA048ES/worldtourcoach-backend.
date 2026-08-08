@@ -516,6 +516,18 @@ function safeNum(val, fallback = 0) {
   return (isNaN(n) || val === null || val === undefined) ? fallback : n;
 }
 
+// ─── SANITIZAR NÚMERO CON RANGO (para datos de Supabase) ─────
+// Devuelve el valor numérico si es finito y está dentro del rango [min, max].
+// Si es inválido (NaN/Infinity), null/undefined o fuera de rango, devuelve el fallback.
+// min/max son inclusivos; usar undefined para no limitar ese extremo.
+function sanitizeNum(val, min, max, fallback) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  if (min !== undefined && n < min) return fallback;
+  if (max !== undefined && n > max) return fallback;
+  return n;
+}
+
 function formatDate(d) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1300,48 +1312,97 @@ async function obtenerDatosGarminSupabase() {
     }
     
     const g = wellness[0];
-    
+
+    // ─── VALIDAR FECHA ─────────────────────────────────────────
+    // Si la fecha es inválida, el registro no puede asociarse a un día
+    // y sus datos no deben entrar en cálculos de semana/readiness.
+    if (!g.date || isNaN(new Date(g.date).getTime())) {
+      console.log('[Garmin] Fecha inválida en wellness:', g.date);
+      return null;
+    }
+
     // Consultar HRV de Garmin
-    const { data: hrvData } = await supabase
+    const { data: hrvData, error: errHrv } = await supabase
       .from('garmin_hrv')
       .select('*')
       .eq('user_id', CONFIG.CHAT_ID || '939585578')
       .eq('date', g.date)
       .limit(1);
-    
+    if (errHrv) {
+      console.log('[Garmin] Error consultando HRV:', errHrv.message);
+    }
+
     // Consultar sueño de Garmin
-    const { data: sleepData } = await supabase
+    const { data: sleepData, error: errSleep } = await supabase
       .from('garmin_sleep')
       .select('*')
       .eq('user_id', CONFIG.CHAT_ID || '939585578')
       .eq('date', g.date)
       .limit(1);
-    
-    // Construir objeto today compatible
-    const sleepScore = g.sleep_score || (sleepData && sleepData.length > 0 ? sleepData[0].sleep_score : null);
+    if (errSleep) {
+      console.log('[Garmin] Error consultando sueño:', errSleep.message);
+    }
+
+    // ─── SANITIZAR DATOS DE WELLNESS ──────────────────────────
+    // Rango esperado: body_battery 0-100, stress 0-100, sleep 0-100,
+    // HRV 20-200, FC reposo 30-120, FC max/min 30-250, SpO2 70-100,
+    // respiración 5-40, pasos >= 0.
+    // Si un valor es inválido (NaN/Infinity/null/fuera de rango) se
+    // sustituye por null o un fallback seguro, evitando que NaN o
+    // valores absurdos entren en readiness/planificación.
+    const bodyBattery = sanitizeNum(g.body_battery, 0, 100, null);
+    const bodyBatteryMax = sanitizeNum(g.body_battery_max, 0, 100, null);
+    const bodyBatteryMin = sanitizeNum(g.body_battery_min, 0, 100, null);
+    const stressAvg = sanitizeNum(g.stress_avg, 0, 100, null);
+    const stressMax = sanitizeNum(g.stress_max, 0, 100, null);
+    const restingHR = sanitizeNum(g.resting_hr, 30, 120, null);
+    const maxHR = sanitizeNum(g.max_hr, 30, 250, null);
+    const minHR = sanitizeNum(g.min_hr, 30, 250, null);
+    const avgSpo2 = sanitizeNum(g.avg_spo2, 70, 100, null);
+    const avgRespiration = sanitizeNum(g.avg_respiration, 5, 40, null);
+    const steps = sanitizeNum(g.total_steps, 0, undefined, 0);
+
+    // Sleep score: wellness primero, luego tabla garmin_sleep
+    const sleepFromWellness = sanitizeNum(g.sleep_score, 0, 100, null);
+    const sleepFromTable = sleepData && sleepData.length > 0 ? sanitizeNum(sleepData[0].sleep_score, 0, 100, null) : null;
+    const sleepScore = sleepFromWellness !== null ? sleepFromWellness : sleepFromTable;
+
+    // HRV: hrv_last_night primero, luego hrv_weekly (mismo orden que antes)
+    const hrvLastNight = sanitizeNum(g.hrv_last_night, 20, 200, null);
+    const hrvWeekly = sanitizeNum(g.hrv_weekly, 20, 200, null);
+    const hrv = hrvLastNight !== null ? hrvLastNight : (hrvWeekly !== null ? hrvWeekly : 50);
+
+    // Duración de sueño en segundos (>= 0)
+    const sleepSeconds = sanitizeNum(g.sleep_seconds, 0, undefined, null);
+    const deepSleepSeconds = sanitizeNum(g.deep_sleep_seconds, 0, undefined, null);
+    const lightSleepSeconds = sanitizeNum(g.light_sleep_seconds, 0, undefined, null);
+    const remSleepSeconds = sanitizeNum(g.rem_sleep_seconds, 0, undefined, null);
+    const awakeSleepSeconds = sanitizeNum(g.awake_sleep_seconds, 0, undefined, null);
+
+    // Construir objeto today compatible (se mantiene la lógica original)
     const today = {
-      hrv: g.hrv_last_night || g.hrv_weekly || 50,
+      hrv: hrv,
       sleepQuality: sleepScore >= 80 ? 3 : sleepScore >= 60 ? 2 : 1,
-      steps: g.total_steps || 0,
-      stepsCount: g.total_steps || 0,
-      bodyBattery: g.body_battery,
-      bodyBatteryMax: g.body_battery_max,
-      bodyBatteryMin: g.body_battery_min,
-      stressAvg: g.stress_avg,
-      stressMax: g.stress_max,
-      restingHR: g.resting_hr,
-      maxHR: g.max_hr,
-      minHR: g.min_hr,
-      avgSpo2: g.avg_spo2,
-      avgRespiration: g.avg_respiration,
-      sleepSeconds: g.sleep_seconds,
-      deepSleepSeconds: g.deep_sleep_seconds,
-      lightSleepSeconds: g.light_sleep_seconds,
-      remSleepSeconds: g.rem_sleep_seconds,
-      awakeSleepSeconds: g.awake_sleep_seconds,
+      steps: steps,
+      stepsCount: steps,
+      bodyBattery: bodyBattery,
+      bodyBatteryMax: bodyBatteryMax,
+      bodyBatteryMin: bodyBatteryMin,
+      stressAvg: stressAvg,
+      stressMax: stressMax,
+      restingHR: restingHR,
+      maxHR: maxHR,
+      minHR: minHR,
+      avgSpo2: avgSpo2,
+      avgRespiration: avgRespiration,
+      sleepSeconds: sleepSeconds,
+      deepSleepSeconds: deepSleepSeconds,
+      lightSleepSeconds: lightSleepSeconds,
+      remSleepSeconds: remSleepSeconds,
+      awakeSleepSeconds: awakeSleepSeconds,
       sleepScore: sleepScore,
-      hrvWeekly: g.hrv_weekly,
-      hrvLastNight: g.hrv_last_night,
+      hrvWeekly: hrvWeekly,
+      hrvLastNight: hrvLastNight,
       date: g.date,
       fuente: 'garmin'
     };
