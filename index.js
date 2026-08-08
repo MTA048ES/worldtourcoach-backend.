@@ -949,6 +949,13 @@ async function cmdIA(args) {
       return;
     }
 
+    // ─── VALIDACIÓN DE LONGITUD ─────────────────────────────────
+    const MAX_PROMPT_LENGTH = 1000;
+    if (prompt.length > MAX_PROMPT_LENGTH) {
+      await sendTelegram(`❌ Pregunta demasiado larga (${prompt.length} caracteres).\n\nMáximo permitido: ${MAX_PROMPT_LENGTH} caracteres.\n\nSimplifica tu pregunta y vuelve a intentarlo.`);
+      return;
+    }
+
     // DEBUG: Verificar si la API key está cargada
     console.log('[cmdIA] 🔍 DEBUG - OPENROUTER_API_KEY:', CONFIG.OPENROUTER.API_KEY ? '✅ Presente' : '❌ AUSENTE');
     console.log('[cmdIA] 🔍 DEBUG - process.env.OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? '✅ Presente' : '❌ AUSENTE');
@@ -3719,6 +3726,22 @@ function buildAnalisisEntrenoManu(act, powerCurve) {
 
 async function cmdAnalizar(args) {
   try {
+    // ─── VALIDACIÓN DE ARGUMENTOS ─────────────────────────────────
+    if (args && args.length > 1) {
+      await sendTelegram('❌ Demasiados argumentos.\n\nUsa: `/analizar` (última actividad) o `/analizar [ID]` con un solo ID numérico.');
+      return;
+    }
+    if (args && args.length === 1) {
+      const id = args[0];
+      // El ID se trata como string (sin parseInt) para evitar problemas de precisión de JavaScript.
+      // Debe ser numérico positivo, sin ceros a la izquierda que lo anulen, y de máximo 15 dígitos.
+      const esValido = /^[1-9]\d{0,14}$/.test(id);
+      if (!esValido) {
+        await sendTelegram('❌ ID inválido: "' + id + '".\n\nUsa: /analizar (última actividad) o /analizar [ID] con un ID numérico positivo de hasta 15 dígitos.');
+        return;
+      }
+    }
+
     let activityId = args && args.length > 0 ? args[0] : null;
     let activity = null;
     
