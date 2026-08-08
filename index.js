@@ -277,18 +277,39 @@ async function cargarHistorialCompleto() {
     // Convertir actividades de Intervals al formato del historial
     if (actividades && actividades.length > 0) {
       actividades.forEach(act => {
-        const np = safeNum(act.np, 0);
-        const tss = safeNum(act.tss, 0);
-        const ifVal = (act.if_value && act.if_value > 0) ? act.if_value : (np > 0 ? np / CONFIG.FTP : 0);
-        const durSeg = safeNum(act.moving_time, 0) || safeNum(act.elapsed_time, 0);
+        // ─── #11: VALIDAR FECHA ─────────────────────────────────
+        // Si la fecha es inválida/null/undefined, omitir SOLO esta actividad
+        // sin romper la carga del resto del historial.
+        if (!act.Fecha || isNaN(new Date(act.Fecha).getTime())) {
+          console.log('[cargarHistorialCompleto] ⚠️ Actividad omitida por fecha inválida:', act.actividad_id || act.id || 'desconocido');
+          return;
+        }
+
+        // ─── #12: VALIDAR CAMPOS NUMÉRICOS ──────────────────────
+        // Los valores deben ser finitos y no negativos. Si un campo
+        // secundario es inválido se sustituye por 0 (seguro matemáticamente).
+        // Los campos esenciales (fecha, TSS, NP, IF) no pueden contaminar
+        // FTP estimado, proyección, densidad, tendencias ni aprendizaje.
+        const np = sanitizeNum(act.np, 0, undefined, 0);
+        const tss = sanitizeNum(act.tss, 0, undefined, 0);
+        const ifVal = sanitizeNum(act.if_value, 0, undefined, 0);
+        const movingTime = sanitizeNum(act.moving_time, 0, undefined, 0);
+        const elapsedTime = sanitizeNum(act.elapsed_time, 0, undefined, 0);
+
+        // IF: usar if_value si es válido (>0), si no calcular de NP/FTP
+        const ifCalculado = ifVal > 0 ? ifVal : (np > 0 ? np / CONFIG.FTP : 0);
+
+        // moving_time: si es 0/inválido, usar elapsed_time (mismo respaldo que el original)
+        const durSeg = movingTime > 0 ? movingTime : elapsedTime;
         const durMin = durSeg > 0 ? Math.round(durSeg / 60) : 0;
+
         historial.push({
-          fecha: act.Fecha || new Date().toISOString(),
+          fecha: act.Fecha,
           entreno: {
             tipo: 'actividad',
             tss: tss,
             np: np,
-            intensidad: ifVal,
+            intensidad: ifCalculado,
             durMin: durMin,
             duracionTotalMin: durMin
           },
@@ -303,24 +324,52 @@ async function cargarHistorialCompleto() {
     // Añadir entrenos con feedback (tienen prioridad)
     if (entrenos && entrenos.length > 0) {
       entrenos.forEach(ent => {
+        // ─── #13: VALIDAR FECHA ─────────────────────────────────
+        // Si la fecha es inválida/null/undefined, omitir SOLO este registro
+        // sin romper la carga del resto del historial.
+        if (!ent.fecha || isNaN(new Date(ent.fecha).getTime())) {
+          console.log('[cargarHistorialCompleto] ⚠️ Entreno omitido por fecha inválida:', ent.id || 'desconocido');
+          return;
+        }
+
+        // ─── #13: VALIDAR CAMPOS NUMÉRICOS ──────────────────────
+        // tss/intensidad/durmin/reps: finitos y >= 0 (fallback 0, seguro
+        // matemáticamente — solo significa "sin datos de carga").
+        // rpe/piernas/stress/sleep/resultado/watts: si el valor es inválido
+        // o desconocido NO se inventa un valor. Se deja como null = desconocido,
+        // y los consumidores posteriores tienen fallbacks propios.
+        const tss = sanitizeNum(ent.tss, 0, undefined, 0);
+        const intensidad = sanitizeNum(ent.intensidad, 0, undefined, 0);
+        const durMin = sanitizeNum(ent.durmin, 0, undefined, 0);
+        const reps = sanitizeNum(ent.reps, 0, undefined, 0);
+        const rpe = sanitizeNum(ent.rpe, 1, 10, null);
+        const piernas = sanitizeNum(ent.piernas, 1, 3, null);
+        const stress = sanitizeNum(ent.stress, 1, 3, null);
+        const sleep = sanitizeNum(ent.sleep, 1, 3, null);
+        const resultado = sanitizeNum(ent.resultado, 0, 100, null);
+
+        // watts: solo acepta 'si'/'no'/'parcial'; si es inválido → null (desconocido)
+        const wattsValido = ent.watts === 'si' || ent.watts === 'no' || ent.watts === 'parcial';
+        const watts = wattsValido ? ent.watts : null;
+
         historial.push({
-          fecha: ent.fecha || new Date().toISOString(),
+          fecha: ent.fecha,
           entreno: {
             tipo: ent.tipo || 'desconocido',
-            tss: ent.tss || 0,
-            intensidad: ent.intensidad || 0,
-            durMin: ent.durmin || 0,
-            duracionTotalMin: ent.durmin || 0,
-            reps: ent.reps || 0
+            tss: tss,
+            intensidad: intensidad,
+            durMin: durMin,
+            duracionTotalMin: durMin,
+            reps: reps
           },
           feedback: {
-            rpe: ent.rpe || 5,
-            watts: ent.watts || 'si',
-            piernas: ent.piernas || 2,
-            stress: ent.stress || 2,
-            sleep: ent.sleep || 2
+            rpe: rpe,
+            watts: watts,
+            piernas: piernas,
+            stress: stress,
+            sleep: sleep
           },
-          resultado: ent.resultado || 70,
+          resultado: resultado,
           peso: 1.0,
           contexto: {
             momentoDia: ent.momento_dia || 'desconocido',
