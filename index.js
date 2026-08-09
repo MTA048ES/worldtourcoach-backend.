@@ -224,14 +224,66 @@ async function obtenerHistorialSupabase(limit = 100) {
       .eq('user_id', CONFIG.CHAT_ID || 'default')
       .order('fecha', { ascending: false })
       .limit(limit);
-      
+
     if (error) {
       console.log('[obtenerHistorialSupabase] Error:', error);
       return [];
     }
-    
-    return data || [];
-    
+
+    if (!data || data.length === 0) {
+      return [];
+    }
+
+    // ─── #14: VALIDAR REGISTROS DE historial_entrenos ────────────
+    // Evita que datos corruptos (null, NaN, Infinity, strings o valores
+    // fuera de rango) entren en Readiness, estadísticas, tendencias,
+    // densidad, aprendizaje o planificación.
+    // Reglas:
+    //  - fecha inválida → OMITIR el registro completo (contamina tendencias).
+    //  - campos numéricos secundarios inválidos → null (NO inventar datos).
+    //  - watts → solo 'si'/'no'/'parcial'; si no → null.
+    //  - Los registros válidos conservan exactamente sus valores originales.
+    const historialValidado = [];
+
+    for (const ent of data) {
+      // Fecha: si es inválida, omitir el registro completo
+      if (!ent.fecha || isNaN(new Date(ent.fecha).getTime())) {
+        console.log(`⚠️ Historial omitido por fecha inválida: ${ent.id || 'desconocido'}`);
+        continue;
+      }
+
+      // Campos numéricos: finitos y dentro de rango; si no → null
+      const tss = sanitizeNum(ent.tss, 0, undefined, null);
+      const durmin = sanitizeNum(ent.durmin, 0, undefined, null);
+      const intensidad = sanitizeNum(ent.intensidad, 0, undefined, null);
+      const reps = sanitizeNum(ent.reps, 0, undefined, null);
+      const rpe = sanitizeNum(ent.rpe, 1, 10, null);
+      const piernas = sanitizeNum(ent.piernas, 1, 3, null);
+      const stress = sanitizeNum(ent.stress, 1, 3, null);
+      const sleep = sanitizeNum(ent.sleep, 1, 3, null);
+      const resultado = sanitizeNum(ent.resultado, 0, 100, null);
+
+      // watts: solo acepta 'si'/'no'/'parcial'; si no → null
+      const wattsValido = ent.watts === 'si' || ent.watts === 'no' || ent.watts === 'parcial';
+      const watts = wattsValido ? ent.watts : null;
+
+      historialValidado.push({
+        ...ent,
+        tss,
+        durmin,
+        intensidad,
+        reps,
+        rpe,
+        piernas,
+        stress,
+        sleep,
+        resultado,
+        watts
+      });
+    }
+
+    return historialValidado;
+
   } catch (err) {
     console.log('[obtenerHistorialSupabase] ERROR:', err);
     return [];
