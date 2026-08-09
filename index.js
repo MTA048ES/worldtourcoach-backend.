@@ -293,7 +293,9 @@ async function cargarHistorialCompleto() {
         const np = sanitizeNum(act.np, 0, undefined, 0);
         const tss = sanitizeNum(act.tss, 0, undefined, 0);
         const ifVal = sanitizeNum(act.if_value, 0, undefined, 0);
-        const movingTime = sanitizeNum(act.moving_time, 0, undefined, 0);
+        // La columna real en Supabase se llama "Tiempo en movimiento"
+        // (con espacios). Se soporta también moving_time como respaldo.
+        const movingTime = sanitizeNum(act['Tiempo en movimiento'] ?? act.moving_time, 0, undefined, 0);
         const elapsedTime = sanitizeNum(act.elapsed_time, 0, undefined, 0);
 
         // IF: usar if_value si es válido (>0), si no calcular de NP/FTP
@@ -428,7 +430,7 @@ async function guardarActividadSupabase(actividad) {
       kj: Number(actividad.icu_kilojoules || actividad.kilojoules || 0),
       Distancia: Number(actividad.distance || 0),
       elevacion: Number(actividad.elevation_gain || 0),
-      moving_time: Number(actividad.moving_time || actividad.elapsed_time || 0),
+      'Tiempo en movimiento': Number(actividad.moving_time || actividad.elapsed_time || 0),
       user_id: CONFIG.CHAT_ID || 'default'
     };
     
@@ -1581,9 +1583,14 @@ async function calcularEstadoSistema(datos) {
   }
 
   const today = datos.today;
-  const ctl = safeNum(today.ctl, 50);
-  const atl = safeNum(today.atl, 50);
-  const tsb = ctl - atl;
+  // FUENTE DE CTL/ATL/TSB (prioridad):
+  // 1) today.ctl/atl/tsb — si la fuente actual (Garmin/Intervals) los trae
+  // 2) datos.ctl/atl/tsb — valores reales de Intervals wellness (cuando
+  //    today es Garmin, que NO calcula CTL/ATL/TSB)
+  // 3) fallback de seguridad (50 / 50 / diferencia)
+  const ctl = safeNum(today.ctl, safeNum(datos.ctl, 50));
+  const atl = safeNum(today.atl, safeNum(datos.atl, 50));
+  const tsb = safeNum(today.tsb, safeNum(datos.tsb, ctl - atl));
   const hrv = safeNum(today.hrv, 50);
   const sleepQuality = safeNum(today.sleepQuality, 2);
   const pasos = safeNum(today.steps) || safeNum(today.stepsCount) || 0;
