@@ -1397,11 +1397,12 @@ async function fetchWeatherSafe() {
 // ─── GARMIN: OBTENER DATOS DE SUPABASE ──────────────────────────
 async function obtenerDatosGarminSupabase() {
   try {
+    const hoy = formatDate(new Date());
     const { data: wellness, error: errWellness } = await supabase
       .from('garmin_wellness')
       .select('*')
       .eq('user_id', CONFIG.CHAT_ID || '939585578')
-      .order('date', { ascending: false })
+      .eq('date', hoy)
       .limit(1);
     
     if (errWellness) {
@@ -1658,15 +1659,56 @@ async function calcularEstadoSistema(datos) {
   const domingoEstaSemana = new Date(lunesEstaSemana.getTime() + 6 * 86400000);
   const domingoStr = formatDate(domingoEstaSemana);
 
-  (datos.activities || []).forEach((a) => {
-    const d = new Date(a.start_date_local || a.start_date || '');
-    const fechaStr = formatDate(d);
-    if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
-      weeklyTss += safeNum(a.icu_training_load, 0);
-      weeklyHours += safeNum(a.moving_time, 0) / 3600;
-      weeklySessions++;
+  // ─── FUENTE PRIMARIA: actividades_guardadas (Supabase) ─────────
+  // Usar Supabase como fuente de verdad para el volumen semanal.
+  // Solo caemos a datos.activities (Intervals) si Supabase falla.
+  try {
+    const { data: actividadesSupabase, error: errAct } = await supabase
+      .from('actividades_guardadas')
+      .select('*')
+      .eq('user_id', CONFIG.CHAT_ID || 'default')
+      .gte('Fecha', lunesStr)
+      .lte('Fecha', domingoStr);
+
+    if (!errAct && actividadesSupabase && actividadesSupabase.length > 0) {
+      // Fuente primaria: Supabase
+      actividadesSupabase.forEach((a) => {
+        const tss = safeNum(a.tss, 0);
+        const movingTime = safeNum(a['Tiempo en movimiento'] || a.moving_time, 0);
+        if (tss > 0 || movingTime > 0) {
+          weeklyTss += tss;
+          weeklyHours += movingTime / 3600;
+          weeklySessions++;
+        }
+      });
+      console.log('[calcularEstadoSistema] ✅ TSS semanal desde Supabase:', weeklySessions, 'sesiones,', Math.round(weeklyTss), 'TSS');
+    } else {
+      // Fallback: datos.activities (Intervals)
+      const errorMsg = errAct ? `Error: ${errAct.message}` : 'Sin datos';
+      console.log('[calcularEstadoSistema] ⚠️ Supabase vacío o error, usando Intervals como fallback:', errorMsg);
+      (datos.activities || []).forEach((a) => {
+        const d = new Date(a.start_date_local || a.start_date || '');
+        const fechaStr = formatDate(d);
+        if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
+          weeklyTss += safeNum(a.icu_training_load, 0);
+          weeklyHours += safeNum(a.moving_time, 0) / 3600;
+          weeklySessions++;
+        }
+      });
     }
-  });
+  } catch (err) {
+    // Fallback seguro: datos.activities
+    console.log('[calcularEstadoSistema] ❌ Error consultando Supabase, usando Intervals:', err.message);
+    (datos.activities || []).forEach((a) => {
+      const d = new Date(a.start_date_local || a.start_date || '');
+      const fechaStr = formatDate(d);
+      if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
+        weeklyTss += safeNum(a.icu_training_load, 0);
+        weeklyHours += safeNum(a.moving_time, 0) / 3600;
+        weeklySessions++;
+      }
+    });
+  }
 
   // ─── READINESS CON TENDENCIAS Y APRENDIZAJE ─────────────────
   const historialParaReadiness = await obtenerHistorialAsync();
@@ -5883,7 +5925,7 @@ async function cmdSync() {
   try {
     await sendTelegram('🔄 *SINCRONIZANDO CON SUPABASE...*\n━━━━━━━━━━━━━━━━━━━━━━\n\nCargando actividades de Intervals.icu...');
     
-    const resultado = await sincronizarActividadesSupabase(10);
+    const resultado = await sincronizarActividadesSupabase(50);
     
     if (resultado.sincronizado) {
       // Obtener actividades guardadas de Supabase (tabla correcta: actividades_guardadas)
