@@ -157,6 +157,36 @@ const CONFIG = {
   }
 };
 
+// ═══════════════════════════════════════════════════════════════
+// 📊 REFERENCIAS DE RENDIMIENTO (CAMBIO 8)
+// ═══════════════════════════════════════════════════════════════
+// Capa de contexto que diferencia:
+//   1. FTP OPERATIVO = CONFIG.FTP (240W) - ÚNICA fuente de verdad operativa
+//   2. POTENCIA DEMOSTRADA = best efforts reales de power curve
+//   3. FTP PROPIO ESTIMADO = calcularFTPEstimado() - proyección independiente
+//   4. eFTP INTERVALS = null (no disponible por API)
+//   5. OBJETIVO = CONFIG.FTP_HISTORICO.valor (296W)
+//
+// REGLA ABSOLUTA: NADA de esta capa puede modificar CONFIG.FTP.
+// ═══════════════════════════════════════════════════════════════
+const performanceReferences = {
+  ftpOperativo: CONFIG.FTP,
+  eftpIntervals: null,
+  ftpPropioEstimado: null,
+  potenciaDemostrada: {
+    best1m: null,
+    best5m: null,
+    best10m: null,
+    best20m: null,
+    best30m: null,
+    best60m: null,
+    fecha: null,
+    actividadId: null
+  },
+  npReciente: null,
+  objetivo: CONFIG.FTP_HISTORICO.valor
+};
+
 console.log('🔑 Telegram Token:', CONFIG.TELEGRAM_TOKEN ? '✅ Configurado' : '❌ FALTA');
 console.log('📱 CHAT_ID:', CONFIG.CHAT_ID || '❌ FALTA');
 console.log('📊 FTP:', CONFIG.FTP, 'W');
@@ -1331,6 +1361,192 @@ async function fetchPowerCurve(activityId) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 📊 REFERENCIAS DE RENDIMIENTO - FUNCIONES (CAMBIO 8)
+// ═══════════════════════════════════════════════════════════════
+
+// ─── EXTRAER BEST EFFORTS DE POWER CURVE ──────────────────────
+// Acepta de forma segura el formato real de Intervals.icu:
+//  - { list: [{ secs: [...], values: [...] }] } (formato REAL confirmado)
+//    secs y values son arrays paralelos: posición i de secs ↔ posición i de values
+//  - objeto con claves "60", "300", "600", etc. (fallback)
+//  - array de objetos si la API devuelve otro formato razonable (fallback)
+//  - null
+//  - respuesta incompleta
+function extraerBestEffortsPowerCurve(powerCurve) {
+  const result = {
+    best1m: null,
+    best5m: null,
+    best10m: null,
+    best20m: null,
+    best30m: null,
+    best60m: null
+  };
+
+  if (!powerCurve) return result;
+
+  // Mapear duraciones en segundos a campos
+  const duraciones = {
+    '60': 'best1m',
+    '300': 'best5m',
+    '600': 'best10m',
+    '1200': 'best20m',
+    '1800': 'best30m',
+    '3600': 'best60m'
+  };
+
+  try {
+    // Formato REAL de Intervals.icu: { list: [{ secs: [...], values: [...] }] }
+    // secs y values son arrays paralelos. Se localiza cada duración objetivo
+    // exacta en secs y se toma el vatio correspondiente en values.
+    // Si una duración no existe exactamente, se omite (comportamiento seguro,
+    // sin interpolaciones ni valores inventados).
+    if (powerCurve && typeof powerCurve === 'object' && Array.isArray(powerCurve.list)) {
+      for (const item of powerCurve.list) {
+        if (!item || typeof item !== 'object') continue;
+        if (!Array.isArray(item.secs) || !Array.isArray(item.values)) continue;
+
+        for (const [seg, campo] of Object.entries(duraciones)) {
+          const idx = item.secs.indexOf(Number(seg));
+          if (idx === -1) continue; // duración no existe exactamente → se omite
+          const val = item.values[idx];
+          const num = safeNum(val, null);
+          if (num !== null && num > 0) {
+            const redondeado = Math.round(num);
+            if (result[campo] === null || redondeado > result[campo]) {
+              result[campo] = redondeado;
+            }
+          }
+        }
+      }
+      return result;
+    }
+
+    // Formato 1 (fallback): objeto con claves "60", "300", etc.
+    if (typeof powerCurve === 'object' && !Array.isArray(powerCurve)) {
+      for (const [seg, campo] of Object.entries(duraciones)) {
+        const val = powerCurve[seg];
+        if (val !== undefined && val !== null) {
+          const num = safeNum(val, null);
+          if (num !== null && num > 0) {
+            result[campo] = Math.round(num);
+          }
+        }
+      }
+      return result;
+    }
+
+    // Formato 2 (fallback): array de objetos con campos duration/power o seconds/watts
+    if (Array.isArray(powerCurve)) {
+      for (const item of powerCurve) {
+        if (!item || typeof item !== 'object') continue;
+        const seg = safeNum(item.duration || item.seconds || item.secs, null);
+        const watts = safeNum(item.power || item.watts || item.value, null);
+        if (seg !== null && watts !== null && watts > 0) {
+          const campo = duraciones[String(seg)];
+          if (campo && (result[campo] === null || watts > result[campo])) {
+            result[campo] = Math.round(watts);
+          }
+        }
+      }
+      return result;
+    }
+  } catch (e) {
+    console.log('[extraerBestEffortsPowerCurve] Error:', e.message);
+  }
+
+  return result;
+}
+
+// ─── OBTENER POTENCIA REALMENTE DEMOSTRADA ────────────────────
+// Procesa máximo 5 actividades recientes con potencia válida.
+// Para cada actividad obtiene power curve y extrae best efforts.
+// Actualiza el máximo histórico de cada duración.
+// NO convierte NP en FTP. NP se guarda como contexto independiente.
+async function obtenerPotenciaDemostrada(activities) {
+  const resultado = {
+    best1m: null,
+    best5m: null,
+    best10m: null,
+    best20m: null,
+    best30m: null,
+    best60m: null,
+    fecha: null,
+    actividadId: null
+  };
+
+  if (!activities || !Array.isArray(activities) || activities.length === 0) {
+    return resultado;
+  }
+
+  // Procesar máximo 5 actividades con potencia válida
+  const conPotencia = activities
+    .filter(a => safeNum(a.icu_weighted_avg_watts, 0) > 0)
+    .slice(0, 5);
+
+  if (conPotencia.length === 0) {
+    return resultado;
+  }
+
+  let mejorActividadId = null;
+  let mejorFecha = null;
+
+  for (const act of conPotencia) {
+    try {
+      const powerCurve = await fetchPowerCurve(act.id);
+      if (!powerCurve) continue;
+
+      const bestEfforts = extraerBestEffortsPowerCurve(powerCurve);
+
+      // Actualizar máximos históricos
+      for (const [campo, valor] of Object.entries(bestEfforts)) {
+        if (valor !== null && (resultado[campo] === null || valor > resultado[campo])) {
+          resultado[campo] = valor;
+          mejorActividadId = act.id;
+          mejorFecha = act.start_date_local || act.start_date || null;
+        }
+      }
+    } catch (e) {
+      console.log('[obtenerPotenciaDemostrada] Error con actividad', act.id, e.message);
+    }
+  }
+
+  resultado.actividadId = mejorActividadId;
+  resultado.fecha = mejorFecha;
+
+  return resultado;
+}
+
+// ─── GETTERS SEGUROS DE REFERENCIAS ───────────────────────────
+// Todas devuelven referencias sin modificar CONFIG.
+
+function getFTPOperativo() {
+  return CONFIG.FTP;
+}
+
+function geteFTPIntervals() {
+  return null; // No disponible por API
+}
+
+function getPotenciaDemostrada() {
+  return performanceReferences.potenciaDemostrada;
+}
+
+function getFTPPropioEstimado() {
+  return calcularFTPEstimado();
+}
+
+function getPerformanceReferences() {
+  return {
+    ftpOperativo: getFTPOperativo(),
+    eftpIntervals: geteFTPIntervals(),
+    ftpPropioEstimado: getFTPPropioEstimado(),
+    potenciaDemostrada: getPotenciaDemostrada(),
+    npReciente: performanceReferences.npReciente,
+    objetivo: CONFIG.FTP_HISTORICO.valor
+  };
+}
+
 // ─── WEATHER ───
 async function fetchWeather() {
   try {
@@ -1527,6 +1743,44 @@ async function fetchActivitiesSafe(limit) {
   try { return await fetchActivities(limit); } catch(e) { console.log('[fetchActivitiesSafe] Error:', e.message); return []; }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🆕 FRESCURA DE DATOS FISIOLÓGICOS (CAMBIO 8 FASE 2)
+// ═══════════════════════════════════════════════════════════════
+// Determina la antigüedad de una fecha respecto a HOY:
+//   HOY           → misma fecha
+//   AYER          → 1 día de diferencia
+//   RECIENTE      → 2-7 días
+//   ANTIGUO       → más de 7 días
+//   NO_DISPONIBLE → fecha nula/inválida o ausencia de registro
+// REGLA CRÍTICA: un dato antiguo NO se reutiliza como estado actual.
+function calcularFrescura(fechaStr) {
+  if (!fechaStr || isNaN(new Date(fechaStr).getTime())) {
+    return 'NO_DISPONIBLE';
+  }
+  const hoy = new Date();
+  const hoyStr = formatDate(hoy);
+  const fecha = new Date(fechaStr);
+  const fechaStrNorm = formatDate(fecha);
+
+  // Normalizar para evitar problemas de zona horaria
+  const hoyNorm = new Date(hoyStr + 'T00:00:00');
+
+  if (fechaStrNorm === hoyStr) return 'HOY';
+  const diffDias = Math.round((hoyNorm - new Date(fechaStrNorm + 'T00:00:00')) / 86400000);
+  if (diffDias <= 0) return 'HOY';
+  if (diffDias === 1) return 'AYER';
+  if (diffDias <= 7) return 'RECIENTE';
+  return 'ANTIGUO';
+}
+
+function obtenerDiasDesde(fechaStr) {
+  if (!fechaStr || isNaN(new Date(fechaStr).getTime())) return null;
+  const hoy = new Date();
+  const hoyStr = formatDate(hoy);
+  const fecha = formatDate(new Date(fechaStr));
+  return Math.round((new Date(hoyStr + 'T00:00:00') - new Date(fecha + 'T00:00:00')) / 86400000);
+}
+
 async function obtenerDatosCompletos() {
   try {
     console.log('[obtenerDatosCompletos] 1. Intentando datos Garmin de Supabase...');
@@ -1537,7 +1791,28 @@ async function obtenerDatosCompletos() {
     // SEGUNDO: Obtener datos de Intervals (para CTL/ATL/TSB y actividades)
     console.log('[obtenerDatosCompletos] 2. Obteniendo wellness de Intervals...');
     const wellness = await fetchWellnessSafe(7);
-    const intervalsToday = (wellness && wellness.length > 0) ? wellness[wellness.length - 1] : null;
+
+    // ─── BUSCAR REGISTRO DE INTERVALS PARA HOY ──────────────────
+    // REGLA CRÍTICA: NO usar wellness[wellness.length - 1] como "hoy".
+    // Buscar explícitamente un registro cuya fecha sea HOY.
+    // Si no existe → NO_DISPONIBLE (nunca se reutiliza ayer/antiguo).
+    const hoyStr = formatDate(new Date());
+    let intervalsToday = null;
+    if (wellness && Array.isArray(wellness) && wellness.length > 0) {
+      // Intervals.icu wellness usa campo 'date' o 'day' según versión
+      intervalsToday = wellness.find(w => {
+        if (!w) return false;
+        const fechaCampo = w.date || w.day;
+        return fechaCampo && formatDate(new Date(fechaCampo)) === hoyStr;
+      }) || null;
+
+      if (intervalsToday) {
+        console.log('[obtenerDatosCompletos] ✅ Intervals wellness de HOY encontrado');
+      } else {
+        console.log('[obtenerDatosCompletos] ⚠️ Intervals wellness NO tiene registro de hoy (último:', 
+          (wellness[wellness.length - 1] && (wellness[wellness.length - 1].date || wellness[wellness.length - 1].day)) || 'desconocido', ')');
+      }
+    }
 
     console.log('[obtenerDatosCompletos] 3. Obteniendo actividades...');
     const activities = await fetchActivitiesSafe(28);
@@ -1547,21 +1822,83 @@ async function obtenerDatosCompletos() {
     const weather = await fetchWeatherSafe();
     console.log('[obtenerDatosCompletos] 6. Clima OK:', weather ? '✅' : '❌ null');
 
-    // ─── COMBINAR DATOS: Garmin + Intervals ───
-    // Si hay datos Garmin, usar sus valores de salud (más precisos)
-    // Si no, usar los de Intervals (fallback)
-    const today = garminData ? garminData.today : intervalsToday;
+    // ─── COMBINAR DATOS FISIOLÓGICOS: Garmin + Intervals ───
+    // Prioridad para estado fisiológico HOY:
+    //   1) Garmin directo de hoy (fuente más precisa)
+    //   2) Intervals wellness de hoy
+    //   3) NO_DISPONIBLE (nunca ayer/antiguo como estado actual)
+    //
+    // CTL/ATL/TSB SIEMPRE de Intervals (independiente de la frescura fisiológica).
+    const intervalsCtl = intervalsToday ? safeNum(intervalsToday.ctl, null) : null;
+    const intervalsAtl = intervalsToday ? safeNum(intervalsToday.atl, null) : null;
+    const ctl = intervalsCtl !== null && intervalsCtl !== undefined ? intervalsCtl
+      : safeNum((wellness && wellness.length > 0) ? (wellness[wellness.length-1]?.ctl) : null, 50);
+    const atl = intervalsAtl !== null && intervalsAtl !== undefined ? intervalsAtl
+      : safeNum((wellness && wellness.length > 0) ? (wellness[wellness.length-1]?.atl) : null, 50);
+    const tsb = (ctl !== null && atl !== null) ? ctl - atl : 0;
+
+    // Estado fisiológico actual: SOLO si hay dato fresco HOY (o AYER para
+    // señales de recuperación nocturna, según regla). Nunca RECIENTE/ANTIGUO.
+    let today = null;
+    let physioSource = 'NO_DISPONIBLE';
+
+    if (garminData && garminData.today) {
+      const frescuraGarmin = garminData.today.frescura || calcularFrescura(garminData.today.date);
+      if (frescuraGarmin === 'HOY' || frescuraGarmin === 'AYER') {
+        today = garminData.today;
+        physioSource = 'GARMIN';
+        console.log('[obtenerDatosCompletos] ✅ Estado fisiológico de GARMIN (' + frescuraGarmin + '):', garminData.today.date);
+      } else {
+        console.log('[obtenerDatosCompletos] ⚠️ Datos Garmin NO frescos (' + frescuraGarmin + '):', garminData.today.date, '→ NO usados como estado actual');
+      }
+    }
+
+    if (!today && intervalsToday) {
+      const frescuraIntervals = calcularFrescura(intervalsToday.date || intervalsToday.day);
+      if (frescuraIntervals === 'HOY' || frescuraIntervals === 'AYER') {
+        today = intervalsToday;
+        physioSource = 'INTERVALS';
+        console.log('[obtenerDatosCompletos] ✅ Estado fisiológico de INTERVALS (' + frescuraIntervals + '):', intervalsToday.date || intervalsToday.day);
+      }
+    }
+
+    // ─── PASOS/HRV: SOLO si hay dato fisiológico válido y fresco ───
+    const physioFresh = today
+      ? (calcularFrescura(today.date || today.day || today.start_date)) 
+      : 'NO_DISPONIBLE';
 
     const pasos = today ? (safeNum(today.steps) || safeNum(today.stepsCount) || 0) : 0;
-    const sueño = today ? (safeNum(today.sleepQuality) || 2) : 2;
-    const hrv = today ? (safeNum(today.hrv) || 50) : 50;
+    const sueño = today ? (safeNum(today.sleepQuality, null)) : null;
+    const hrv = today ? (safeNum(today.hrv, null)) : null;
 
-    // CTL/ATL/TSB siempre de Intervals (Garmin no los calcula)
-    const ctl = intervalsToday ? safeNum(intervalsToday.ctl, 50) : 50;
-    const atl = intervalsToday ? safeNum(intervalsToday.atl, 50) : 50;
-    const tsb = ctl - atl;
+    const garminExtra = garminData ? garminData.today : null;
+    const garminFresh = garminData ? (calcularFrescura(garminData.today.date)) : 'NO_DISPONIBLE';
 
-    console.log('[obtenerDatosCompletos] 7. Datos calculados. Fuente:', garminData ? 'GARMIN' : 'INTERVALS', '| CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
+    // Construir objeto de recuperación fisiológica con fecha y frescura
+    const recuperacionFisiologica = {
+      fresh: physioFresh,
+      date: today ? (today.date || today.day || null) : null,
+      ageDays: today ? obtenerDiasDesde(today.date || today.day) : null,
+      source: physioSource,
+      sleepScore: today ? safeNum(today.sleepScore, null) : null,
+      sleepQuality: sueño,
+      hrv: hrv,
+      restingHR: today ? safeNum(today.restingHR, null) : null,
+      bodyBattery: today ? safeNum(today.bodyBattery, null) : null,
+      bodyBatteryMax: today ? safeNum(today.bodyBatteryMax, null) : null,
+      bodyBatteryMin: today ? safeNum(today.bodyBatteryMin, null) : null,
+      stressAvg: today ? safeNum(today.stressAvg, null) : null,
+      stressMax: today ? safeNum(today.stressMax, null) : null,
+      avgSpo2: today ? safeNum(today.avgSpo2, null) : null,
+      avgRespiration: today ? safeNum(today.avgRespiration, null) : null,
+      deepSleepSeconds: today ? safeNum(today.deepSleepSeconds, null) : null,
+      remSleepSeconds: today ? safeNum(today.remSleepSeconds, null) : null,
+      sleepSeconds: today ? safeNum(today.sleepSeconds, null) : null
+    };
+
+    console.log('[obtenerDatosCompletos] 7. Datos calculados. Fuente fisio:', physioSource, 
+      '| Frescura:', physioFresh,
+      '| CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
 
     return {
       wellness,
@@ -1574,26 +1911,31 @@ async function obtenerDatosCompletos() {
       ctl,
       atl,
       tsb,
+      physioFresh,
+      physioSource,
+      recuperacionFisiologica,
       garmin: garminData ? {
-        bodyBattery: garminData.today.bodyBattery,
-        bodyBatteryMax: garminData.today.bodyBatteryMax,
-        bodyBatteryMin: garminData.today.bodyBatteryMin,
-        stressAvg: garminData.today.stressAvg,
-        stressMax: garminData.today.stressMax,
-        restingHR: garminData.today.restingHR,
-        maxHR: garminData.today.maxHR,
-        minHR: garminData.today.minHR,
-        avgSpo2: garminData.today.avgSpo2,
-        avgRespiration: garminData.today.avgRespiration,
-        sleepSeconds: garminData.today.sleepSeconds,
-        deepSleepSeconds: garminData.today.deepSleepSeconds,
-        lightSleepSeconds: garminData.today.lightSleepSeconds,
-        remSleepSeconds: garminData.today.remSleepSeconds,
-        awakeSleepSeconds: garminData.today.awakeSleepSeconds,
-        sleepScore: garminData.today.sleepScore,
-        hrvLastNight: garminData.today.hrvLastNight,
-        hrvWeekly: garminData.today.hrvWeekly,
-        date: garminData.today.date
+        bodyBattery: garminExtra ? garminExtra.bodyBattery : null,
+        bodyBatteryMax: garminExtra ? garminExtra.bodyBatteryMax : null,
+        bodyBatteryMin: garminExtra ? garminExtra.bodyBatteryMin : null,
+        stressAvg: garminExtra ? garminExtra.stressAvg : null,
+        stressMax: garminExtra ? garminExtra.stressMax : null,
+        restingHR: garminExtra ? garminExtra.restingHR : null,
+        maxHR: garminExtra ? garminExtra.maxHR : null,
+        minHR: garminExtra ? garminExtra.minHR : null,
+        avgSpo2: garminExtra ? garminExtra.avgSpo2 : null,
+        avgRespiration: garminExtra ? garminExtra.avgRespiration : null,
+        sleepSeconds: garminExtra ? garminExtra.sleepSeconds : null,
+        deepSleepSeconds: garminExtra ? garminExtra.deepSleepSeconds : null,
+        lightSleepSeconds: garminExtra ? garminExtra.lightSleepSeconds : null,
+        remSleepSeconds: garminExtra ? garminExtra.remSleepSeconds : null,
+        awakeSleepSeconds: garminExtra ? garminExtra.awakeSleepSeconds : null,
+        sleepScore: garminExtra ? garminExtra.sleepScore : null,
+        hrvLastNight: garminExtra ? garminExtra.hrvLastNight : null,
+        hrvWeekly: garminExtra ? garminExtra.hrvWeekly : null,
+        date: garminExtra ? garminExtra.date : null,
+        fresh: garminFresh,
+        ageDays: garminData ? obtenerDiasDesde(garminData.today.date) : null
       } : null
     };
   } catch (err) {
@@ -1644,9 +1986,14 @@ async function calcularEstadoSistema(datos) {
   const ctl = safeNum(today.ctl, safeNum(datos.ctl, 50));
   const atl = safeNum(today.atl, safeNum(datos.atl, 50));
   const tsb = safeNum(today.tsb, safeNum(datos.tsb, ctl - atl));
-  const hrv = safeNum(today.hrv, 50);
-  const sleepQuality = safeNum(today.sleepQuality, 2);
-  const pasos = safeNum(today.steps) || safeNum(today.stepsCount) || 0;
+  // FRESCURA: si no hay datos fisiológicos válidos (HOY/AYER), hrv y
+  // sleepQuality DEBEN quedar como null para que Readiness no los
+  // interprete como ausencia = mala recuperación. Nunca usar 50/2 como
+  // valores inventados cuando el dato no existe.
+  const physioFreshLocal = datos.physioFresh || 'NO_DISPONIBLE';
+  const hrv = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? safeNum(today.hrv, null) : null;
+  const sleepQuality = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? safeNum(today.sleepQuality, null) : null;
+  const pasos = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? (safeNum(today.steps) || safeNum(today.stepsCount) || 0) : 0;
 
   let weeklyTss = 0;
   let weeklyHours = 0;
@@ -1712,12 +2059,14 @@ async function calcularEstadoSistema(datos) {
 
   // ─── READINESS CON TENDENCIAS Y APRENDIZAJE ─────────────────
   const historialParaReadiness = await obtenerHistorialAsync();
+  const physioFresh = datos.physioFresh || 'NO_DISPONIBLE';
   const readinessResult = calcularReadinessConTendencia({
     tsb,
     hrv,
     sleepQuality,
     pasos,
-    weeklyTss
+    weeklyTss,
+    physioFresh
   }, historialParaReadiness);
   
   let readiness = readinessResult.readiness;
@@ -1732,6 +2081,11 @@ async function calcularEstadoSistema(datos) {
   // Guardar tendencias para debugging
   if (readinessResult.tendencias) {
     readinessTendencias = readinessResult.tendencias;
+  }
+
+  // Si no hay datos fisiológicos frescos, añadir aviso
+  if (physioFresh === 'NO_DISPONIBLE' || physioFresh === 'ANTIGUO' || physioFresh === 'RECIENTE') {
+    readinessAlertas.push('⚠️ Recuperación fisiológica no disponible hoy - Readiness basada solo en carga (CTL/ATL/TSB)');
   }
 
   let factorCalor = 1.0;
@@ -3315,7 +3669,8 @@ async function getAthleteState() {
         proyeccion: calcularProyeccionObjetivo(),
         horasRecuperacion: 8,
         proximoEntreno: 'Mañana',
-        aprendizaje: { stats: { suficiente: false, total: 0 }, probabilidad: { probabilidad: 50, nivel: '🟡 MEDIA', base: 'Sin datos' } }
+        aprendizaje: { stats: { suficiente: false, total: 0 }, probabilidad: { probabilidad: 50, nivel: '🟡 MEDIA', base: 'Sin datos' } },
+        performanceReferences: getPerformanceReferences()
       };
     }
 
@@ -3436,7 +3791,8 @@ async function getAthleteState() {
       proyeccion: proyeccion,
       horasRecuperacion: horasRec,
       proximoEntreno: proximoEntreno,
-      aprendizaje: { stats, probabilidad }
+      aprendizaje: { stats, probabilidad },
+      performanceReferences: getPerformanceReferences()
     };
 
   } catch (err) {
@@ -3659,25 +4015,42 @@ async function cmdHoy(chatId) {
     msg += '*📊 ESTADO*\n';
     msg += `• Readiness: *${state.readiness}/100*\n`;
     msg += `• CTL: ${e.ctl.toFixed(1)} | ATL: ${e.atl.toFixed(1)} | TSB: ${state.tsb.toFixed(1)}\n`;
-    msg += `• Sueño: ${e.sleepQuality === 1 ? '😴 Malo' : e.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
+    // Sueño: si no hay datos fisiológicos frescos, mostrar "No disponible"
+    const physioFreshHoy = state.datos && state.datos.physioFresh ? state.datos.physioFresh : 'NO_DISPONIBLE';
+    if (physioFreshHoy === 'HOY' || physioFreshHoy === 'AYER') {
+      msg += `• Sueño: ${e.sleepQuality === 1 ? '😴 Malo' : e.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
+    } else {
+      msg += `• Sueño: No disponible\n`;
+    }
     msg += `• Pasos: ${e.pasos.toLocaleString()}\n`;
     if (e.acwr > 1.3) msg += `• ⚠️ ACWR: ${e.acwr.toFixed(2)} (ALTO)\n`;
     msg += '\n';
 
-    // ─── DATOS GARMIN (datos reales del reloj) ───
-    if (state.datos && state.datos.garmin) {
-      const g = state.datos.garmin;
-      msg += '*🔋 GARMIN (datos reales)*\n';
-      if (g.date) msg += `• 📅 Fecha: ${g.date}\n`;
-      if (g.bodyBattery !== null && g.bodyBattery !== undefined) msg += `• Body Battery: *${g.bodyBattery}%* ${g.bodyBattery < 30 ? '🔴' : g.bodyBattery < 50 ? '🟡' : '🟢'}\n`;
-      if (g.stressAvg !== null && g.stressAvg !== undefined) msg += `• Estrés: *${g.stressAvg}* ${g.stressAvg > 70 ? '🔴' : g.stressAvg > 50 ? '🟡' : '🟢'}\n`;
-      if (g.sleepScore !== null && g.sleepScore !== undefined) msg += `• Score sueño: *${g.sleepScore}* ${g.sleepScore >= 80 ? '🟢' : g.sleepScore >= 60 ? '🟡' : '🔴'}\n`;
-      if (g.deepSleepSeconds !== null && g.deepSleepSeconds !== undefined && g.deepSleepSeconds > 0) msg += `• Sueño profundo: *${(g.deepSleepSeconds / 3600).toFixed(1)}h*\n`;
-      if (g.remSleepSeconds !== null && g.remSleepSeconds !== undefined && g.remSleepSeconds > 0) msg += `• Sueño REM: *${(g.remSleepSeconds / 3600).toFixed(1)}h*\n`;
-      if (g.restingHR !== null && g.restingHR !== undefined) msg += `• HR reposo: *${g.restingHR} bpm*\n`;
-      if (g.avgSpo2 !== null && g.avgSpo2 !== undefined) msg += `• SpO2: *${g.avgSpo2}%*\n`;
-      if (g.hrvLastNight !== null && g.hrvLastNight !== undefined) msg += `• HRV nocturno: *${g.hrvLastNight} ms*\n`;
+    // ─── DATOS GARMIN / RECUPERACIÓN FISIOLÓGICA ───
+    // Si hay datos Garmin frescos, mostrarlos. Si no, mostrar aviso.
+    const garminFallback = (state.datos && state.datos.recuperacionFisiologica) ? state.datos.recuperacionFisiologica : null;
+    if (garminFallback && (garminFallback.fresh === 'HOY' || garminFallback.fresh === 'AYER')) {
+      msg += '*🔋 RECUPERACIÓN FISIOLÓGICA*\n';
+      if (garminFallback.date) msg += `• 📅 Fecha: ${garminFallback.date}\n`;
+      if (garminFallback.bodyBattery !== null && garminFallback.bodyBattery !== undefined) msg += `• Body Battery: *${garminFallback.bodyBattery}%* ${garminFallback.bodyBattery < 30 ? '🔴' : garminFallback.bodyBattery < 50 ? '🟡' : '🟢'}\n`;
+      if (garminFallback.stressAvg !== null && garminFallback.stressAvg !== undefined) msg += `• Estrés: *${garminFallback.stressAvg}* ${garminFallback.stressAvg > 70 ? '🔴' : garminFallback.stressAvg > 50 ? '🟡' : '🟢'}\n`;
+      if (garminFallback.sleepScore !== null && garminFallback.sleepScore !== undefined) msg += `• Score sueño: *${garminFallback.sleepScore}* ${garminFallback.sleepScore >= 80 ? '🟢' : garminFallback.sleepScore >= 60 ? '🟡' : '🔴'}\n`;
+      if (garminFallback.deepSleepSeconds !== null && garminFallback.deepSleepSeconds !== undefined && garminFallback.deepSleepSeconds > 0) msg += `• Sueño profundo: *${(garminFallback.deepSleepSeconds / 3600).toFixed(1)}h*\n`;
+      if (garminFallback.remSleepSeconds !== null && garminFallback.remSleepSeconds !== undefined && garminFallback.remSleepSeconds > 0) msg += `• Sueño REM: *${(garminFallback.remSleepSeconds / 3600).toFixed(1)}h*\n`;
+      if (garminFallback.restingHR !== null && garminFallback.restingHR !== undefined) msg += `• HR reposo: *${garminFallback.restingHR} bpm*\n`;
+      if (garminFallback.avgSpo2 !== null && garminFallback.avgSpo2 !== undefined) msg += `• SpO2: *${garminFallback.avgSpo2}%*\n`;
+      if (garminFallback.hrvLastNight !== null && garminFallback.hrvLastNight !== undefined) msg += `• HRV nocturno: *${garminFallback.hrvLastNight} ms*\n`;
       msg += '\n';
+    } else if (garminFallback && (garminFallback.fresh === 'RECIENTE' || garminFallback.fresh === 'ANTIGUO')) {
+      msg += '*⚠️ RECUPERACIÓN FISIOLÓGICA*\n';
+      msg += '• Datos actuales no disponibles\n';
+      msg += `• Último dato disponible: ${garminFallback.date || 'desconocido'}\n`;
+      msg += `• Hace ${garminFallback.ageDays || '?'} días\n`;
+      msg += '• No utilizado para calcular Readiness\n\n';
+    } else {
+      msg += '*⚠️ RECUPERACIÓN FISIOLÓGICA*\n';
+      msg += '• Datos actuales no disponibles\n';
+      msg += '• No utilizado para calcular Readiness\n\n';
     }
 
     if (state.ftpEstimado) {
@@ -6854,19 +7227,30 @@ function calcularMovilidadAdaptativa(estado) {
 
 // ─── calcularReadinessConTendencia() ────────────────────────
 function calcularReadinessConTendencia(estado, historial) {
-  const tsb = estado.tsb || 0; const hrv = estado.hrv || 50; const sleepQuality = estado.sleepQuality || 2; const pasos = estado.pasos || 0;
+  // FRESCURA: si physioFresh NO es HOY/AYER, hrv/sleepQuality deben
+  // ser neutrales (no penalizar por ausencia de datos). Los valores
+  // null ya llegan desde calcularEstadoSistema cuando no hay frescura.
+  const physioFresh = estado.physioFresh || 'NO_DISPONIBLE';
+  const fisioValida = physioFresh === 'HOY' || physioFresh === 'AYER';
+  const tsb = estado.tsb || 0; const hrv = fisioValida ? estado.hrv : null; const sleepQuality = fisioValida ? estado.sleepQuality : null; const pasos = fisioValida ? estado.pasos : 0;
+  // Si no hay datos fisiológicos frescos, contribución NEUTRA para HRV
+  // y sleep (NO penalizar ausencia como mala recuperación).
+  const hrvUsable = hrv !== null && hrv !== undefined;
+  const sleepUsable = sleepQuality !== null && sleepQuality !== undefined;
+  const hrvEfectivo = hrvUsable ? hrv : 50;
+  const sleepEfectivo = sleepUsable ? sleepQuality : 2;
   let tendenciaHRV = 0, tendenciaSleep = 0, tendenciaTSB = 0;
   if (historial && historial.length >= 3) {
     const ultimos = historial.slice(-7);
     const hrvV = ultimos.filter(h => h.hrv).map(h => h.hrv); const sleepV = ultimos.filter(h => h.sleepQuality).map(h => h.sleepQuality); const tsbV = ultimos.filter(h => h.tsb !== undefined).map(h => h.tsb);
-    if (hrvV.length >= 3) { const m = hrvV.reduce((a,b)=>a+b,0)/hrvV.length; if (hrv < m*0.9) tendenciaHRV = -10; else if (hrv > m*1.1) tendenciaHRV = 5; }
-    if (sleepV.length >= 3) { const m = sleepV.reduce((a,b)=>a+b,0)/sleepV.length; if (sleepQuality < m-0.5) tendenciaSleep = -10; else if (sleepQuality > m+0.5) tendenciaSleep = 5; }
+    if (hrvV.length >= 3 && hrvUsable) { const m = hrvV.reduce((a,b)=>a+b,0)/hrvV.length; if (hrvEfectivo < m*0.9) tendenciaHRV = -10; else if (hrvEfectivo > m*1.1) tendenciaHRV = 5; }
+    if (sleepV.length >= 3 && sleepUsable) { const m = sleepV.reduce((a,b)=>a+b,0)/sleepV.length; if (sleepEfectivo < m-0.5) tendenciaSleep = -10; else if (sleepEfectivo > m+0.5) tendenciaSleep = 5; }
     if (tsbV.length >= 3) { const r = tsbV.slice(-3).reduce((a,b)=>a+b,0)/3; const a = tsbV.slice(0,3).reduce((a,b)=>a+b,0)/3; if (r < a-5) tendenciaTSB = -10; else if (r > a+5) tendenciaTSB = 5; }
   }
   let readiness = 70;
   if (tsb < -30) readiness -= 30; else if (tsb < -20) readiness -= 20; else if (tsb < -10) readiness -= 10; else if (tsb > 10) readiness += 10; else if (tsb > 5) readiness += 5;
-  if (hrv < 30) readiness -= 20; else if (hrv < 40) readiness -= 15; else if (hrv < 50) readiness -= 5; else if (hrv > 65) readiness += 10; else if (hrv > 55) readiness += 5;
-  if (sleepQuality === 1) readiness -= 20; else if (sleepQuality === 2) readiness -= 5; else if (sleepQuality === 3) readiness += 10;
+  if (hrvUsable && hrvEfectivo < 30) readiness -= 20; else if (hrvUsable && hrvEfectivo < 40) readiness -= 15; else if (hrvUsable && hrvEfectivo < 50) readiness -= 5; else if (hrvUsable && hrvEfectivo > 65) readiness += 10; else if (hrvUsable && hrvEfectivo > 55) readiness += 5;
+  if (sleepUsable && sleepEfectivo === 1) readiness -= 20; else if (sleepUsable && sleepEfectivo === 2) readiness -= 5; else if (sleepUsable && sleepEfectivo === 3) readiness += 10;
   if (pasos > 20000) readiness -= 10; else if (pasos > 15000) readiness -= 5; else if (pasos < 5000 && tsb < -10) readiness += 5;
   readiness += tendenciaHRV + tendenciaSleep + tendenciaTSB;
   let clasificacion = '🟢 Normal', alertas = [];
@@ -7147,6 +7531,58 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ─── REGISTRAR WEBHOOK DE TELEGRAM AUTOMÁTICAMENTE ─────────────
+async function registrarWebhookTelegram() {
+  if (!CONFIG.TELEGRAM_TOKEN) {
+    console.log('[Webhook] ❌ No se puede registrar webhook: falta TELEGRAM_TOKEN');
+    return;
+  }
+
+  // Detectar URL pública del despliegue
+  const publicUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : process.env.RENDER_EXTERNAL_URL 
+      ? process.env.RENDER_EXTERNAL_URL
+      : process.env.PUBLIC_URL 
+        ? process.env.PUBLIC_URL
+        : null;
+
+  if (!publicUrl) {
+    console.log('[Webhook] ⚠️ No se detectó URL pública (RAILWAY_PUBLIC_DOMAIN, RENDER_EXTERNAL_URL o PUBLIC_URL).');
+    console.log('[Webhook] ⚠️ Configura manualmente con:');
+    console.log(`[Webhook]   curl "https://api.telegram.org/bot${CONFIG.TELEGRAM_TOKEN}/setWebhook?url=TU_URL/webhook"`);
+    return;
+  }
+
+  const webhookUrl = `${publicUrl}/webhook`;
+  const apiUrl = `https://api.telegram.org/bot${CONFIG.TELEGRAM_TOKEN}/setWebhook`;
+
+  try {
+    console.log(`[Webhook] 🔄 Registrando webhook en Telegram...`);
+    console.log(`[Webhook] 📍 URL: ${webhookUrl}`);
+
+    const response = await fetchWithTimeout(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: webhookUrl,
+        allowed_updates: ['message', 'edited_message', 'channel_post']
+      })
+    }, TIMEOUTS.TELEGRAM);
+
+    const data = await response.json();
+    
+    if (data.ok) {
+      console.log(`[Webhook] ✅ Webhook registrado correctamente: ${webhookUrl}`);
+      console.log(`[Webhook] 📥 Pending updates: ${data.result?.pending_update_count || 0}`);
+    } else {
+      console.log(`[Webhook] ❌ Error al registrar webhook: ${data.description || 'Desconocido'}`);
+    }
+  } catch (err) {
+    console.log(`[Webhook] ❌ Error de red al registrar webhook: ${err.message}`);
+  }
+}
+
 // ─── INICIAR SERVIDOR ───
 app.listen(PORT, () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -7192,4 +7628,7 @@ app.listen(PORT, () => {
   console.log('🆕 CEREBRO: Dashboard de aprendizaje completo');
   console.log('🆕 CEREBRO: Recomendaciones inteligentes');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  
+  // ─── REGISTRAR WEBHOOK AUTOMÁTICAMENTE ────────────────────────
+  registrarWebhookTelegram();
 });
