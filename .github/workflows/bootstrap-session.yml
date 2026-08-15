@@ -1,0 +1,39 @@
+name: Bootstrap Garmin Session
+on:
+  workflow_dispatch:
+    inputs:
+      oauth1_token_base64:
+        description: "Base64-encoded content of oauth1_token.json (local session)"
+        required: true
+      oauth2_token_base64:
+        description: "Base64-encoded content of oauth2_token.json (local session)"
+        required: true
+
+permissions:
+  actions: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create session directory
+        run: mkdir -p session/garmin_session
+
+      - name: Decode and write oauth1 token
+        run: |
+          echo "${{ inputs.oauth1_token_base64 }}" | base64 -d > session/garmin_session/oauth1_token.json
+          echo "::add-mask::${{ inputs.oauth1_token_base64 }}"
+
+      - name: Decode and write oauth2 token
+        run: |
+          echo "${{ inputs.oauth2_token_base64 }}" | base64 -d > session/garmin_session/oauth2_token.json
+          echo "::add-mask::${{ inputs.oauth2_token_base64 }}"
+
+      - name: Upload Garmin session artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: garmin-session
+          path: session/garmin_session
+          overwrite: true
+          if-no-files-found: error
