@@ -21,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -77,6 +77,15 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ steps.last-run.outputs.result }}
         continue-on-error: true
+
+      - name: Verify session token exists
+        run: |
+          if [ ! -f session/garmin_session/garmin_tokens.json ]; then
+            echo "::error::No se encontró session/garmin_session/garmin_tokens.json"
+            echo "Regenera la sesión localmente y vuelve a subir el artifact."
+            exit 1
+          fi
+          echo "Tokenstore encontrado: session/garmin_session/garmin_tokens.json"
 
       - name: Run Garmin sync
         env:
