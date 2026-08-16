@@ -83,13 +83,17 @@ def load_garmin_session(session_file: Path):
     return garmin
 
 
+def is_github_actions():
+    """Detecta si se está ejecutando en GitHub Actions."""
+    return os.getenv("GITHUB_ACTIONS") == "true"
+
+
 def authenticate_garmin(session_file: Path, mfa_code: str = None):
     """
     Gestiona la autenticación de Garmin.
     - Si existe una sesión válida en session/garmin_session, la reutiliza.
-    - Si la sesión expiró, usa la lógica de autenticación EXISTENTE en garmin_to_supabase.py.
-    - Las credenciales provienen de las variables de entorno existentes (EMAIL, PASSWORD).
-    - El código MFA se pasa como argumento si es necesario.
+    - En GitHub Actions: si la sesión falla, NO hace login interactivo (error claro).
+    - En local: si la sesión falla, permite login interactivo con MFA.
     """
     if session_file.exists():
         print("  Usando sesión guardada...")
@@ -99,8 +103,16 @@ def authenticate_garmin(session_file: Path, mfa_code: str = None):
             return garmin
         except Exception as e:
             print(f"  [WARN] Sesión expirada o inválida: {type(e).__name__}")
-            # La sesión expiró; caer al login con credenciales
+            # La sesión expiró; decidir según el entorno
 
+    # En GitHub Actions: NUNCA login interactivo, NUNCA input(), NUNCA MFA
+    if is_github_actions():
+        print("[ERROR] No se pudo reutilizar la sesión Garmin en GitHub Actions.")
+        print("        El tokenstore es inválido o expiró sin refresh posible.")
+        print("        Regenera la sesión localmente y vuelve a subir el artifact.")
+        raise RuntimeError("Sesión Garmin inválida en GitHub Actions (sin fallback interactivo)")
+
+    # En local: permitir login interactivo con MFA para regenerar la sesión
     print("  Iniciando sesión con credenciales...")
 
     def get_mfa_code():
@@ -117,7 +129,7 @@ def authenticate_garmin(session_file: Path, mfa_code: str = None):
         prompt_mfa=get_mfa_code,
     )
     garmin.login()
-    garmin.garth.dump(str(session_file))
+    garmin.client.dump(str(session_file))
     print("  Sesión guardada")
     print("  Autenticación exitosa")
     return garmin
@@ -126,10 +138,10 @@ def authenticate_garmin(session_file: Path, mfa_code: str = None):
 def save_garmin_session(garmin, session_file: Path):
     """
     Guarda la sesión Garmin actualizada en session/garmin_session.
-    Mantiene exactamente el formato que utiliza garth.dump().
+    Utiliza el mecanismo real de garminconnect 0.3.10: client.dump().
     """
     session_file.parent.mkdir(parents=True, exist_ok=True)
-    garmin.garth.dump(str(session_file))
+    garmin.client.dump(str(session_file))
 
 
 def sync_data(garmin, start_date: str, end_date: str):

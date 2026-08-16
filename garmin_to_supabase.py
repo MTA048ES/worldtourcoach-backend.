@@ -438,7 +438,7 @@ def main():
                 prompt_mfa=get_mfa_code,
             )
             garmin.login()
-            garmin.garth.dump(str(session_file))
+            garmin.client.dump(str(session_file))
             print("  Sesion guardada")
         print("  Autenticacion exitosa")
     except Exception as e:
