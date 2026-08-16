@@ -2,11 +2,8 @@ name: Bootstrap Garmin Session
 on:
   workflow_dispatch:
     inputs:
-      oauth1_token_base64:
-        description: "Base64-encoded content of oauth1_token.json (local session)"
-        required: true
-      oauth2_token_base64:
-        description: "Base64-encoded content of oauth2_token.json (local session)"
+      garmin_tokens_base64:
+        description: "Base64-encoded content of garmin_tokens.json (local session)"
         required: true
 
 permissions:
@@ -20,15 +17,15 @@ jobs:
       - name: Create session directory
         run: mkdir -p session/garmin_session
 
-      - name: Decode and write oauth1 token
+      - name: Decode and write garmin tokens
         run: |
-          echo "${{ inputs.oauth1_token_base64 }}" | base64 -d > session/garmin_session/oauth1_token.json
-          echo "::add-mask::${{ inputs.oauth1_token_base64 }}"
+          echo "${{ inputs.garmin_tokens_base64 }}" | base64 -d > session/garmin_session/garmin_tokens.json
+          echo "::add-mask::${{ inputs.garmin_tokens_base64 }}"
 
-      - name: Decode and write oauth2 token
+      - name: Validate JSON
         run: |
-          echo "${{ inputs.oauth2_token_base64 }}" | base64 -d > session/garmin_session/oauth2_token.json
-          echo "::add-mask::${{ inputs.oauth2_token_base64 }}"
+          python3 -c "import json; json.load(open('session/garmin_session/garmin_tokens.json'))"
+          echo "JSON válido"
 
       - name: Upload Garmin session artifact
         uses: actions/upload-artifact@v4
