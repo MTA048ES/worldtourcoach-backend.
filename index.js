@@ -65,6 +65,11 @@ app.get('/ping', (req, res) => {
 const CONFIG = {
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
   CHAT_ID: process.env.CHAT_ID,
+  // Identificador del atleta usado para leer datos Garmin de Supabase.
+  // El script Python (garmin_to_supabase.py) escribe con USER_ID del .env.
+  // Para que el bot lea lo que Garmin escribe, ATHLETE_USER_ID debe coincidir
+  // con ese USER_ID. Por defecto usa CHAT_ID (comportamiento original).
+  ATHLETE_USER_ID: process.env.ATHLETE_USER_ID || process.env.USER_ID || '939585578',
   INTERVALS_API_KEY: process.env.INTERVALS_API_KEY,
   ATHLETE_ID: process.env.ATHLETE_ID,
   WEATHER_API_KEY: process.env.WEATHER_API_KEY,
@@ -1344,7 +1349,7 @@ async function fetchActivities(limit) {
   return fetchIntervals(`/activities?oldest=${start}&newest=${end}&limit=${limit}`);
 }
 
-// ─── POWER CURVE ──────────────────────────────────────────────
+// ─── POWER CURVE (por actividad) ──────────────────────────────
 async function fetchPowerCurve(activityId) {
   try {
     const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
@@ -1360,6 +1365,28 @@ async function fetchPowerCurve(activityId) {
     return null;
   }
 }
+
+// ─── POWER CURVES GLOBALES DEL ATLETA (84d) ────────────────────
+// Obtiene la curva de potencia global del atleta para 84 días.
+// Devuelve los mejores esfuerzos de 1m, 5m, 10m, 20m, 30m, 60m
+// junto con el activity_id y fecha de la actividad que los produjo.
+// Reemplaza a la iteración de fetchPowerCurve() sobre múltiples actividades.
+async function fetchPowerCurvesGlobal() {
+  try {
+    const auth = Buffer.from(`API_KEY:${CONFIG.INTERVALS_API_KEY}`).toString('base64');
+    const url = `https://intervals.icu/api/v1/athlete/${CONFIG.ATHLETE_ID}/power-curves?curves=84d&type=Ride`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Basic ${auth}` }
+    }, TIMEOUTS.INTERVALS);
+    if (!response.ok) return null;
+    return response.json();
+  } catch (e) {
+console.log('[fetchPowerCurvesGlobal] Error:', e.message);
+    return null;
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // 📊 REFERENCIAS DE RENDIMIENTO - FUNCIONES (CAMBIO 8)
@@ -1491,23 +1518,25 @@ async function obtenerPotenciaDemostrada(activities) {
   let mejorActividadId = null;
   let mejorFecha = null;
 
-  for (const act of conPotencia) {
-    try {
-      const powerCurve = await fetchPowerCurve(act.id);
-      if (!powerCurve) continue;
+  // ─── USAR fetchPowerCurvesGlobal() EN LUGAR DE fetchPowerCurve() por actividad ──
+  // Se hace UNA sola llamada global en lugar de 5 llamadas individuales.
+  const powerCurvesGlobal = await fetchPowerCurvesGlobal();
+  if (powerCurvesGlobal) {
+    // Extraer best efforts del resultado global
+    const bestEfforts = extraerBestEffortsPowerCurve(powerCurvesGlobal);
 
-      const bestEfforts = extraerBestEffortsPowerCurve(powerCurve);
-
-      // Actualizar máximos históricos
-      for (const [campo, valor] of Object.entries(bestEfforts)) {
-        if (valor !== null && (resultado[campo] === null || valor > resultado[campo])) {
-          resultado[campo] = valor;
-          mejorActividadId = act.id;
-          mejorFecha = act.start_date_local || act.start_date || null;
-        }
+    // Actualizar máximos históricos
+    for (const [campo, valor] of Object.entries(bestEfforts)) {
+      if (valor !== null && (resultado[campo] === null || valor > resultado[campo])) {
+        resultado[campo] = valor;
       }
-    } catch (e) {
-      console.log('[obtenerPotenciaDemostrada] Error con actividad', act.id, e.message);
+    }
+
+    // Buscar la actividad más reciente con potencia válida para activityId y fecha
+    if (conPotencia.length > 0) {
+      const act = conPotencia[0];
+      mejorActividadId = act.id;
+      mejorFecha = act.start_date_local || act.start_date || null;
     }
   }
 
@@ -1614,10 +1643,15 @@ async function fetchWeatherSafe() {
 async function obtenerDatosGarminSupabase() {
   try {
     const hoy = formatDate(new Date());
-    const { data: wellness, error: errWellness } = await supabase
+    // Buscar primero el registro de HOY exacto (fuente más precisa).
+    // Si no existe, buscar el registro más reciente dentro de los últimos
+    // 7 días (ventana que el sistema ya considera aceptable para frescura).
+    // La frescura se valida después con calcularFrescura() en obtenerDatosCompletos(),
+    // que distingue HOY / AYER / RECIENTE / ANTIGUO / NO_DISPONIBLE.
+    let { data: wellness, error: errWellness } = await supabase
       .from('garmin_wellness')
       .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .eq('user_id', CONFIG.ATHLETE_USER_ID)
       .eq('date', hoy)
       .limit(1);
     
@@ -1627,8 +1661,28 @@ async function obtenerDatosGarminSupabase() {
     }
     
     if (!wellness || wellness.length === 0) {
-      console.log('[Garmin] No hay datos de wellness en Supabase');
-      return null;
+      // Fallback controlado: último registro disponible (AYER o más reciente)
+      const hace7Dias = formatDate(addDays(new Date(), -7));
+      const { data: wellnessReciente, error: errReciente } = await supabase
+        .from('garmin_wellness')
+        .select('*')
+        .eq('user_id', CONFIG.ATHLETE_USER_ID)
+        .gte('date', hace7Dias)
+        .order('date', { ascending: false })
+        .limit(1);
+      
+      if (errReciente) {
+        console.log('[Garmin] Error consultando wellness reciente:', errReciente.message);
+        return null;
+      }
+      
+      if (!wellnessReciente || wellnessReciente.length === 0) {
+        console.log('[Garmin] No hay datos de wellness en Supabase (ni HOY ni recientes)');
+        return null;
+      }
+      
+      wellness = wellnessReciente;
+      console.log('[Garmin] ⚠️ No hay datos de HOY. Usando registro más reciente:', wellness[0].date);
     }
     
     const g = wellness[0];
@@ -1645,7 +1699,7 @@ async function obtenerDatosGarminSupabase() {
     const { data: hrvData, error: errHrv } = await supabase
       .from('garmin_hrv')
       .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .eq('user_id', CONFIG.ATHLETE_USER_ID)
       .eq('date', g.date)
       .limit(1);
     if (errHrv) {
@@ -1656,7 +1710,7 @@ async function obtenerDatosGarminSupabase() {
     const { data: sleepData, error: errSleep } = await supabase
       .from('garmin_sleep')
       .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || '939585578')
+      .eq('user_id', CONFIG.ATHLETE_USER_ID)
       .eq('date', g.date)
       .limit(1);
     if (errSleep) {
@@ -1688,9 +1742,11 @@ async function obtenerDatosGarminSupabase() {
     const sleepScore = sleepFromWellness !== null ? sleepFromWellness : sleepFromTable;
 
     // HRV: hrv_last_night primero, luego hrv_weekly (mismo orden que antes)
+    // Si no hay HRV válido, se devuelve null (NO inventar 50 como dato real).
+    // La lógica de readiness ya trata null como "no disponible" (contribución neutra).
     const hrvLastNight = sanitizeNum(g.hrv_last_night, 20, 200, null);
     const hrvWeekly = sanitizeNum(g.hrv_weekly, 20, 200, null);
-    const hrv = hrvLastNight !== null ? hrvLastNight : (hrvWeekly !== null ? hrvWeekly : 50);
+    const hrv = hrvLastNight !== null ? hrvLastNight : (hrvWeekly !== null ? hrvWeekly : null);
 
     // Duración de sueño en segundos (>= 0)
     const sleepSeconds = sanitizeNum(g.sleep_seconds, 0, undefined, null);
@@ -1946,13 +2002,26 @@ async function obtenerDatosCompletos() {
 }
 
 async function calcularEstadoSistema(datos) {
-  if (!datos || !datos.today) {
+  // ─── DATA QUALITY MÍNIMA ──────────────────────────────────────
+  // Indica si los datos son FRESH (HOY/AYER), STALE (recientes pero no
+  // frescos), FALLBACK (se usaron valores de respaldo) o NO_DISPONIBLE.
+  // Se propaga al estado para que /hoy y /traza puedan advertir al usuario.
+  const dataQuality = {
+    estado: 'NO_DISPONIBLE',
+    fuente: 'ninguna',
+    fecha: null,
+    motivo: 'Sin datos fisiológicos ni de carga disponibles'
+  };
+
+  // Si no hay datos en absoluto, devolver estado de seguridad marcado
+  // como NO_DISPONIBLE (nunca presentarlo como dato real).
+  if (!datos) {
     return {
-      ctl: 50,
-      atl: 50,
-      tsb: 0,
-      hrv: 50,
-      sleepQuality: 2,
+      ctl: null,
+      atl: null,
+      tsb: null,
+      hrv: null,
+      sleepQuality: null,
       readiness: 50,
       weeklyTss: 0,
       weeklyHours: 0,
@@ -1966,6 +2035,7 @@ async function calcularEstadoSistema(datos) {
       heatIndex: 25,
       humidity: 50,
       haceCalor: false,
+      dataQuality,
       flags: {
         estaFatigado: false,
         estaMuyFatigado: false,
@@ -1977,20 +2047,36 @@ async function calcularEstadoSistema(datos) {
     };
   }
 
-  const today = datos.today;
-  // FUENTE DE CTL/ATL/TSB (prioridad):
+  const today = datos.today || null;
+  const physioFreshLocal = datos.physioFresh || 'NO_DISPONIBLE';
+
+  // ─── FUENTE DE CTL/ATL/TSB (prioridad) ────────────────────────
   // 1) today.ctl/atl/tsb — si la fuente actual (Garmin/Intervals) los trae
   // 2) datos.ctl/atl/tsb — valores reales de Intervals wellness (cuando
-  //    today es Garmin, que NO calcula CTL/ATL/TSB)
-  // 3) fallback de seguridad (50 / 50 / diferencia)
-  const ctl = safeNum(today.ctl, safeNum(datos.ctl, 50));
-  const atl = safeNum(today.atl, safeNum(datos.atl, 50));
-  const tsb = safeNum(today.tsb, safeNum(datos.tsb, ctl - atl));
+  //    today es Garmin, que NO calcula CTL/ATL/TSB, o cuando no hay today)
+  // 3) fallback de seguridad SOLO si no existe ningún dato real
+  // IMPORTANTE: NO sustituir por 50/50/0 si existen datos reales de Intervals.
+  const ctl = today ? safeNum(today.ctl, safeNum(datos.ctl, null)) : safeNum(datos.ctl, null);
+  const atl = today ? safeNum(today.atl, safeNum(datos.atl, null)) : safeNum(datos.atl, null);
+  const tsb = (ctl !== null && atl !== null) ? safeNum(today && today.tsb !== undefined ? today.tsb : (ctl - atl), ctl - atl) : null;
+
+  // Determinar calidad de CTL/ATL/TSB
+  if (ctl !== null && atl !== null) {
+    dataQuality.estado = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? 'FRESH' : 'STALE';
+    dataQuality.fuente = 'intervals';
+    dataQuality.fecha = (today && (today.date || today.day)) || (datos.wellness && datos.wellness.length > 0 ? (datos.wellness[datos.wellness.length-1].date || datos.wellness[datos.wellness.length-1].day) : null);
+    dataQuality.motivo = dataQuality.estado === 'FRESH'
+      ? 'CTL/ATL/TSB de Intervals (datos frescos)'
+      : 'CTL/ATL/TSB de Intervals (datos recientes, no de HOY)';
+  } else {
+    dataQuality.estado = 'FALLBACK';
+    dataQuality.motivo = 'Sin CTL/ATL/TSB reales de Intervals disponibles';
+  }
+
   // FRESCURA: si no hay datos fisiológicos válidos (HOY/AYER), hrv y
   // sleepQuality DEBEN quedar como null para que Readiness no los
   // interprete como ausencia = mala recuperación. Nunca usar 50/2 como
   // valores inventados cuando el dato no existe.
-  const physioFreshLocal = datos.physioFresh || 'NO_DISPONIBLE';
   const hrv = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? safeNum(today.hrv, null) : null;
   const sleepQuality = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? safeNum(today.sleepQuality, null) : null;
   const pasos = (physioFreshLocal === 'HOY' || physioFreshLocal === 'AYER') ? (safeNum(today.steps) || safeNum(today.stepsCount) || 0) : 0;
@@ -2009,23 +2095,34 @@ async function calcularEstadoSistema(datos) {
   // ─── FUENTE PRIMARIA: actividades_guardadas (Supabase) ─────────
   // Usar Supabase como fuente de verdad para el volumen semanal.
   // Solo caemos a datos.activities (Intervals) si Supabase falla.
+  // NOTA: El campo Fecha puede contener timestamps completos (con hora y
+  // zona horaria). Para no perder actividades por el formato, se amplía el
+  // rango SQL ±1 día (cubre timestamps del lunes/domingo y desfases de zona)
+  // y después se valida la fecha normalizada en JavaScript.
   try {
+    const lunesStrSQL = formatDate(addDays(lunesEstaSemana, -1));
+    const domingoStrSQL = formatDate(addDays(domingoEstaSemana, 1));
     const { data: actividadesSupabase, error: errAct } = await supabase
       .from('actividades_guardadas')
       .select('*')
       .eq('user_id', CONFIG.CHAT_ID || 'default')
-      .gte('Fecha', lunesStr)
-      .lte('Fecha', domingoStr);
+      .gte('Fecha', lunesStrSQL)
+      .lte('Fecha', domingoStrSQL);
 
     if (!errAct && actividadesSupabase && actividadesSupabase.length > 0) {
       // Fuente primaria: Supabase
       actividadesSupabase.forEach((a) => {
-        const tss = safeNum(a.tss, 0);
-        const movingTime = safeNum(a['Tiempo en movimiento'] || a.moving_time, 0);
-        if (tss > 0 || movingTime > 0) {
-          weeklyTss += tss;
-          weeklyHours += movingTime / 3600;
-          weeklySessions++;
+        // Normalizar la fecha en JS: si Fecha es timestamp completo, se
+        // reduce a YYYY-MM-DD antes de decidir si pertenece a la semana.
+        const fechaStr = formatDate(new Date(a.Fecha));
+        if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
+          const tss = safeNum(a.tss, 0);
+          const movingTime = safeNum(a['Tiempo en movimiento'] || a.moving_time, 0);
+          if (tss > 0 || movingTime > 0) {
+            weeklyTss += tss;
+            weeklyHours += movingTime / 3600;
+            weeklySessions++;
+          }
         }
       });
       console.log('[calcularEstadoSistema] ✅ TSS semanal desde Supabase:', weeklySessions, 'sesiones,', Math.round(weeklyTss), 'TSS');
@@ -2160,6 +2257,7 @@ async function calcularEstadoSistema(datos) {
     heatIndex,
     humidity,
     haceCalor,
+    dataQuality,
     flags: {
       estaFatigado: tsb < -15,
       estaMuyFatigado: tsb < -25,
@@ -3588,91 +3686,12 @@ async function getAthleteState() {
 
     console.log('[getAthleteState] 1. Obteniendo datos...');
     const datos = await obtenerDatosCompletos();
-    if (!datos || !datos.today) {
-      console.log('[getAthleteState] ⚠️ Sin datos de wellness - usando valores por defecto');
-      // Usar valores por defecto para que los comandos funcionen
-      const estadoFallback = {
-        ctl: 50,
-        atl: 50,
-        tsb: 0,
-        hrv: 50,
-        sleepQuality: 2,
-        readiness: 50,
-        weeklyTss: 0,
-        weeklyHours: 0,
-        weeklySessions: 0,
-        tendencia: 'estable',
-        acwr: 1.0,
-        recuperacionNecesaria: 'normal',
-        pasos: 0,
-        factorCalor: 1.0,
-        tempActual: 25,
-        heatIndex: 25,
-        humidity: 50,
-        haceCalor: false,
-        flags: {
-          estaFatigado: false,
-          estaMuyFatigado: false,
-          estaDescansado: false,
-          sobreCargaSemanal: false,
-          necesitaRecuperacion: false,
-          haceCalor: false
-        }
-      };
-      
-      const restriccionesFallback = aplicarRestriccionesGlobales(estadoFallback, CONFIG.AGE_YEARS || 43);
-      const decisionFallback = decidirEntrenamiento(estadoFallback, restriccionesFallback);
-      const workoutFallback = generateWorkout(estadoFallback, restriccionesFallback, decisionFallback, traza);
-      const nutricionFallback = calcularNutricionUnificada(estadoFallback, {
-        tipo: workoutFallback.tipo.toUpperCase(),
-        reps: workoutFallback.reps,
-        durMin: workoutFallback.durMin,
-        kjEsperados: workoutFallback.kjEsperados,
-        ifEsperado: workoutFallback.ifEsperado,
-        duracionTotalMin: workoutFallback.duracionTotalMin
-      });
-      const fuerzaFallback = calcularFuerzaUnificada(estadoFallback);
-      const consejoFallback = generarConsejoUnificado(estadoFallback, decisionFallback, restriccionesFallback);
-      
-      return {
-        timestamp: new Date(),
-        datos: datos || { today: null, activities: [], weather: null },
-        estado: estadoFallback,
-        restricciones: restriccionesFallback,
-        decision: decisionFallback,
-        workout: workoutFallback,
-        entreno: {
-          tipo: workoutFallback.tipo.toUpperCase(),
-          reps: workoutFallback.reps,
-          durMin: workoutFallback.durMin,
-          recSec: workoutFallback.recSec,
-          wLow: workoutFallback.vatios.low,
-          wHigh: workoutFallback.vatios.high,
-          ifEsperado: workoutFallback.ifEsperado,
-          tssEsperado: workoutFallback.tssEsperado,
-          kjEsperados: workoutFallback.kjEsperados,
-          carbsEsperados: workoutFallback.carbsEsperados,
-          duracionTotalMin: workoutFallback.duracionTotalMin
-        },
-        nutricion: nutricionFallback,
-        fuerza: fuerzaFallback,
-        consejo: consejoFallback,
-        traza,
-        tsb: 0,
-        readiness: 50,
-        tempActual: 25,
-        heatIndex: 25,
-        haceCalor: false,
-        fase: getFaseActual(),
-        semana: getSemanaActual(),
-        ftpEstimado: CONFIG.FTP,
-        proyeccion: calcularProyeccionObjetivo(),
-        horasRecuperacion: 8,
-        proximoEntreno: 'Mañana',
-        aprendizaje: { stats: { suficiente: false, total: 0 }, probabilidad: { probabilidad: 50, nivel: '🟡 MEDIA', base: 'Sin datos' } },
-        performanceReferences: getPerformanceReferences()
-      };
-    }
+
+    // NOTA: Ya NO existe fallback duplicado aquí. calcularEstadoSistema()
+    // es la ÚNICA fuente de verdad del estado y maneja correctamente
+    // el caso sin datos (devuelve estado NO_DISPONIBLE con dataQuality).
+    // Esto evita que se sustituyan CTL/ATL/TSB reales por 50/50/0 cuando
+    // no hay registro de HOY pero sí datos recientes de Intervals.
 
     registrarInputTraza(traza, 'fecha', new Date().toISOString(), 'Fecha del estado');
     console.log('[getAthleteState] 2. Datos OK. Calculando estado...');
@@ -3682,6 +3701,11 @@ async function getAthleteState() {
     if (!estado || typeof estado !== 'object') {
       console.log('[getAthleteState] ❌ estado inválido');
       return null;
+    }
+
+    // Guardar dataQuality en la traza para que /traza pueda mostrarlo
+    if (estado.dataQuality) {
+      traza.dataQuality = estado.dataQuality;
     }
 
     registrarInputTraza(traza, 'tsb', estado.tsb, 'Training Stress Balance');
@@ -4007,6 +4031,28 @@ async function cmdHoy(chatId) {
     let msg = '🌅 *WORLD TOUR COACH v9.5 - HOY*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
 
+    // ─── CALIDAD DE DATOS ─────────────────────────────────────────
+    // Informa al usuario sobre la frescura/fiabilidad de los datos
+    // utilizados para calcular el estado. NO cambia ningún cálculo.
+    const dqHoy = state.estado && state.estado.dataQuality ? state.estado.dataQuality : null;
+    if (dqHoy) {
+      if (dqHoy.estado === 'FRESH') {
+        msg += '📊 *Calidad de datos:* FRESH\n';
+      } else if (dqHoy.estado === 'STALE') {
+        msg += '⚠️ *Datos recientes utilizados*\n';
+        msg += `Estado: STALE\n`;
+      } else if (dqHoy.estado === 'FALLBACK') {
+        msg += '⚠️ *Datos de respaldo utilizados*\n';
+        if (dqHoy.motivo) msg += `Motivo: ${dqHoy.motivo}\n`;
+      } else if (dqHoy.estado === 'NO_DISPONIBLE') {
+        msg += '🔴 *Datos no disponibles*\n';
+        msg += 'No hay datos fisiológicos/carga válidos para calcular el estado actual.\n';
+      }
+      if (dqHoy.fuente && dqHoy.fuente !== 'ninguna') msg += `Fuente: ${dqHoy.fuente}\n`;
+      if (dqHoy.fecha) msg += `Fecha: ${dqHoy.fecha}\n`;
+      msg += '\n';
+    }
+
     msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
     msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n`;
     msg += `• TSS objetivo: ${getTssObjetivoSemanal()} | Actual: ${Math.round(e.weeklyTss)}\n\n`;
@@ -4022,7 +4068,13 @@ async function cmdHoy(chatId) {
     } else {
       msg += `• Sueño: No disponible\n`;
     }
-    msg += `• Pasos: ${e.pasos.toLocaleString()}\n`;
+    // Pasos: solo mostrar valor real si hay datos fisiológicos frescos (HOY/AYER).
+    // Si no hay datos frescos, "0" no es un dato real → mostrar "No disponible".
+    if (physioFreshHoy === 'HOY' || physioFreshHoy === 'AYER') {
+      msg += `• Pasos: ${e.pasos.toLocaleString()}\n`;
+    } else {
+      msg += `• Pasos: No disponible\n`;
+    }
     if (e.acwr > 1.3) msg += `• ⚠️ ACWR: ${e.acwr.toFixed(2)} (ALTO)\n`;
     msg += '\n';
 
@@ -4455,6 +4507,18 @@ async function cmdTraza() {
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `📅 *Timestamp:* ${traza.timestamp}\n`;
     msg += `📌 *Versión:* ${traza.version || '9.5'}\n\n`;
+
+    // ─── CALIDAD DE DATOS ─────────────────────────────────────────
+    // Muestra la frescura/fiabilidad de los datos usados en la decisión.
+    if (traza.dataQuality) {
+      const dq = traza.dataQuality;
+      msg += '*📊 CALIDAD DE DATOS*\n';
+      msg += `• Estado: *${dq.estado}*\n`;
+      if (dq.fuente && dq.fuente !== 'ninguna') msg += `• Fuente: ${dq.fuente}\n`;
+      if (dq.fecha) msg += `• Fecha: ${dq.fecha}\n`;
+      if (dq.motivo) msg += `• Motivo: ${dq.motivo}\n`;
+      msg += '\n';
+    }
 
     msg += '*📊 INPUTS USADOS*\n';
     const inputs = traza.inputs || {};
