@@ -176,8 +176,17 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
             print(f"  [WARN] {skipped_count} filas omitidas por discrepancia de fechas en {table}")
         return True, None  # Retornar True para no interrumpir la sincronización
 
-    # Proceder con el UPSERT solo para filas válidas
+    # Proceder con el UPSERT solo para filas válidas.
+    # El target del conflicto debe ser la UNIQUE constraint real de cada tabla:
+    #   - garmin_wellness/garmin_hrv/garmin_sleep -> UNIQUE(user_id, date)
+    #   - garmin_activities                       -> UNIQUE(activity_id)
+    # Sin este parámetro, PostgREST usa la PK (id BIGSERIAL) como target por defecto,
+    # pero esa columna no viaja en el payload y los lotes mixtos fallan con HTTP 409.
     url = f"{SUPABASE_URL}/rest/v1/{table}"
+    if table == "garmin_activities":
+        post_url = f"{url}?on_conflict=activity_id"
+    else:
+        post_url = f"{url}?on_conflict=user_id,date"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -187,7 +196,7 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
 
     # Primero intentar POST con upsert
     try:
-        resp = requests.post(url, headers=headers, json=valid_rows, timeout=30)
+        resp = requests.post(post_url, headers=headers, json=valid_rows, timeout=30)
         if resp.status_code < 400:
             print(f"    [OK] {len(valid_rows)} filas procesadas mediante UPSERT en {table}")
             return True, None
