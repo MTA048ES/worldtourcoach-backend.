@@ -88,6 +88,36 @@ def validate_date_in_range(row_date, requested_start, requested_end):
         except ValueError:
             return False, row_date_str
 
+def _extract_date(value):
+    """
+    Extrae una fecha YYYY-MM-DD de un valor temporal real de actividad.
+
+    Acepta formatos vistos en Garmin:
+      - '2026-08-19 17:08:06'   (startTimeLocal / startTimeGMT)
+      - '2026-08-19T17:08:06+00:00' (start_time_local ya almacenado en Supabase)
+      - 1787152086000           (beginTimestamp en milisegundos)
+
+    Retorna None si no se puede extraer una fecha YYYY-MM-DD.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    # Formato con guion: tomar los primeros 10 caracteres si parecen YYYY-MM-DD
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        candidate = s[0:10]
+        try:
+            datetime.strptime(candidate, "%Y-%m-%d")
+            return candidate
+        except ValueError:
+            return None
+    # Formato epoch (beginTimestamp en milisegundos)
+    try:
+        epoch_ms = float(s)
+        return datetime.utcfromtimestamp(epoch_ms / 1000.0).strftime("%Y-%m-%d")
+    except (ValueError, TypeError, OSError):
+        return None
 def supabase_upsert(table: str, rows: list, requested_start_date: str = None, requested_end_date: str = None):
     """
     Sube datos a Supabase con upsert. Si POST falla por duplicados (409), usa PATCH.
@@ -112,7 +142,15 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
     skipped_count = 0
 
     for row in rows:
+        # La fecha de validación puede venir de la clave 'date' (wellness/hrv/sleep)
+        # o, para garmin_activities, de un campo temporal real de la actividad.
         row_date = row.get("date")
+        if row_date is None and row.get("start_time_local"):
+            # Extraer solo la parte YYYY-MM-DD como fecha de validación sin tocar el esquema.
+            row_date = _extract_date(row.get("start_time_local"))
+        elif row_date is None and row.get("start_time_gmt"):
+            row_date = _extract_date(row.get("start_time_gmt"))
+
         is_valid, row_date_str = validate_date_in_range(row_date, requested_start_date, requested_end_date)
 
         if is_valid:
@@ -161,8 +199,12 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
         print(f"    [ERROR] Conexion Supabase: {e}")
         return False, str(e)
 
-    # PATCH por fila (fallback cuando ya existen)
+    # PATCH por fila (fallback cuando ya existen).
+    # Con 'Prefer: return=representation' podemos distinguir si PostgREST
+    # encontró una fila real (devuelve el registro actualizado) o no (devuelve []).
     updated = 0
+    not_found = 0
+    errors = 0
     for row in valid_rows:
         # Construir filtro segun la clave unica de cada tabla
         if table == "garmin_activities":
@@ -174,15 +216,34 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
-            "Prefer": "return=minimal"
+            "Prefer": "return=representation"
         }
         try:
             r = requests.patch(patch_url, headers=headers_patch, json=row, timeout=30)
             if r.status_code < 400:
-                updated += 1
-        except Exception:
-            pass
+                # return=representation: si la fila existia, devuelve el registro [{}]; si no, []
+                try:
+                    payload = r.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, list) and len(payload) > 0:
+                    updated += 1
+                elif isinstance(payload, dict) and payload:
+                    updated += 1
+                else:
+                    not_found += 1
+                    print(f"    [WARN] PATCH_SIN_MATCH table={table} activity_id={row.get('activity_id', '-')} date={row.get('date', '-')}")
+            else:
+                errors += 1
+                print(f"    [WARN] PATCH_ERROR table={table} status={r.status_code} detail={r.text[:120]}")
+        except Exception as e:
+            errors += 1
+            print(f"    [WARN] PATCH_EXCEPTION table={table} error={e}")
     print(f"    [OK] {updated} filas actualizadas en {table} (PATCH)")
+    if not_found:
+        print(f"    [WARN] {not_found} filas no encontradas en {table} (PATCH sin match)")
+    if errors:
+        print(f"    [WARN] {errors} errores de PATCH en {table}")
     return True, None
 
 def date_range(start_str, end_str):
