@@ -55,11 +55,90 @@ SESSION_DIR = Path(__file__).parent / "session"
 
 import requests
 
-def supabase_upsert(table: str, rows: list):
-    """Sube datos a Supabase con upsert. Si POST falla por duplicados (409), usa PATCH."""
+def validate_date_in_range(row_date, requested_start, requested_end):
+    """
+    Valida que una fecha de fila esté dentro del rango solicitado.
+    Retorna (is_valid, row_date_str) para logging.
+    """
+    if not row_date:
+        return False, "null"
+
+    row_date_str = str(row_date)
+
+    # Determinar si es fecha única o rango
+    is_single_day = (requested_start == requested_end)
+
+    if is_single_day:
+        # Caso A: Fecha única - debe coincidir exactamente
+        if row_date_str == requested_start:
+            return True, row_date_str
+        else:
+            return False, row_date_str
+    else:
+        # Caso B: Rango de fechas - debe estar dentro del rango
+        try:
+            row_dt = datetime.strptime(row_date_str, "%Y-%m-%d").date()
+            start_dt = datetime.strptime(requested_start, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(requested_end, "%Y-%m-%d").date()
+
+            if start_dt <= row_dt <= end_dt:
+                return True, row_date_str
+            else:
+                return False, row_date_str
+        except ValueError:
+            return False, row_date_str
+
+def supabase_upsert(table: str, rows: list, requested_start_date: str = None, requested_end_date: str = None):
+    """
+    Sube datos a Supabase con upsert. Si POST falla por duplicados (409), usa PATCH.
+
+    Parámetros:
+    - table: nombre de la tabla
+    - rows: lista de filas a insertar
+    - requested_start_date: fecha de inicio solicitada (para validación)
+    - requested_end_date: fecha de fin solicitada (para validación)
+    """
     if not rows:
         return True, None
 
+    # Si no se proporcionan fechas de solicitud, usar START_DATE/END_DATE globales
+    if requested_start_date is None:
+        requested_start_date = START_DATE
+    if requested_end_date is None:
+        requested_end_date = END_DATE
+
+    # Validar fechas de cada fila antes del UPSERT
+    valid_rows = []
+    skipped_count = 0
+
+    for row in rows:
+        row_date = row.get("date")
+        is_valid, row_date_str = validate_date_in_range(row_date, requested_start_date, requested_end_date)
+
+        if is_valid:
+            # Log solo para información, no datos sensibles
+            is_single_day = (requested_start_date == requested_end_date)
+            if is_single_day:
+                print(f"  [SYNC] DATE_VALID requested_date={requested_start_date} row_date={row_date_str} action=UPSERT")
+            else:
+                print(f"  [SYNC] DATE_VALID requested_start={requested_start_date} requested_end={requested_end_date} row_date={row_date_str} action=UPSERT")
+            valid_rows.append(row)
+        else:
+            # Log de discrepancia de fechas
+            skipped_count += 1
+            is_single_day = (requested_start_date == requested_end_date)
+            if is_single_day:
+                print(f"  [WARN] DATE_MISMATCH requested_date={requested_start_date} garmin_date={row_date_str} action=SKIPPED")
+            else:
+                print(f"  [WARN] DATE_OUT_OF_RANGE requested_start={requested_start_date} requested_end={requested_end_date} garmin_date={row_date_str} action=SKIPPED")
+
+    # Si no hay filas válidas después de la validación, retornar éxito pero con 0 filas
+    if not valid_rows:
+        if skipped_count > 0:
+            print(f"  [WARN] {skipped_count} filas omitidas por discrepancia de fechas en {table}")
+        return True, None  # Retornar True para no interrumpir la sincronización
+
+    # Proceder con el UPSERT solo para filas válidas
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -70,9 +149,9 @@ def supabase_upsert(table: str, rows: list):
 
     # Primero intentar POST con upsert
     try:
-        resp = requests.post(url, headers=headers, json=rows, timeout=30)
+        resp = requests.post(url, headers=headers, json=valid_rows, timeout=30)
         if resp.status_code < 400:
-            print(f"    [OK] {len(rows)} filas insertadas en {table}")
+            print(f"    [OK] {len(valid_rows)} filas procesadas mediante UPSERT en {table}")
             return True, None
         if resp.status_code != 409:
             print(f"    [ERROR] {resp.status_code}: {resp.text[:200]}")
@@ -84,7 +163,7 @@ def supabase_upsert(table: str, rows: list):
 
     # PATCH por fila (fallback cuando ya existen)
     updated = 0
-    for row in rows:
+    for row in valid_rows:
         # Construir filtro segun la clave unica de cada tabla
         if table == "garmin_activities":
             filters = f"activity_id=eq.{row['activity_id']}"
@@ -532,30 +611,30 @@ def main():
     activities = garmin.get_activities_by_date(START_DATE, END_DATE, "cycling")
     print(f"    {len(activities)} actividades")
 
-    # SUBIR A SUPABASE
+        # SUBIR A SUPABASE
     print("Subiendo a Supabase...")
 
     print("  garmin_wellness...")
     wellness_rows = build_wellness_rows(steps, hr, stress, body, hrv, resp, spo2, sleep)
-    ok, err = supabase_upsert("garmin_wellness", wellness_rows)
+    ok, err = supabase_upsert("garmin_wellness", wellness_rows, START_DATE, END_DATE)
     if not ok:
         print(f"    [WARN] {err}")
 
     print("  garmin_hrv...")
     hrv_rows = build_hrv_rows(hrv)
-    ok, err = supabase_upsert("garmin_hrv", hrv_rows)
+    ok, err = supabase_upsert("garmin_hrv", hrv_rows, START_DATE, END_DATE)
     if not ok:
         print(f"    [WARN] {err}")
 
     print("  garmin_sleep...")
     sleep_rows = build_sleep_rows(sleep)
-    ok, err = supabase_upsert("garmin_sleep", sleep_rows)
+    ok, err = supabase_upsert("garmin_sleep", sleep_rows, START_DATE, END_DATE)
     if not ok:
         print(f"    [WARN] {err}")
 
     print("  garmin_activities...")
     activity_rows = build_activity_rows(activities)
-    ok, err = supabase_upsert("garmin_activities", activity_rows)
+    ok, err = supabase_upsert("garmin_activities", activity_rows, START_DATE, END_DATE)
     if not ok:
         print(f"    [WARN] {err}")
 

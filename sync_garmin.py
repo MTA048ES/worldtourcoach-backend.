@@ -203,13 +203,13 @@ def sync_data(garmin, start_date: str, end_date: str):
     sleep_rows = build_sleep_rows(sleep)
     activity_rows = build_activity_rows(activities)
 
-    # --- Subir a Supabase con UPSERT EXISTENTE ---
+        # --- Subir a Supabase con UPSERT EXISTENTE ---
     print("Subiendo a Supabase...")
 
     upsert_results = []
 
     print("  garmin_wellness...")
-    ok, err = supabase_upsert("garmin_wellness", wellness_rows)
+    ok, err = supabase_upsert("garmin_wellness", wellness_rows, start_date, end_date)
     if not ok:
         print(f"    [ERROR] {err}")
         upsert_results.append(("garmin_wellness", err))
@@ -217,7 +217,7 @@ def sync_data(garmin, start_date: str, end_date: str):
         upsert_results.append(("garmin_wellness", None))
 
     print("  garmin_hrv...")
-    ok, err = supabase_upsert("garmin_hrv", hrv_rows)
+    ok, err = supabase_upsert("garmin_hrv", hrv_rows, start_date, end_date)
     if not ok:
         print(f"    [ERROR] {err}")
         upsert_results.append(("garmin_hrv", err))
@@ -225,7 +225,7 @@ def sync_data(garmin, start_date: str, end_date: str):
         upsert_results.append(("garmin_hrv", None))
 
     print("  garmin_sleep...")
-    ok, err = supabase_upsert("garmin_sleep", sleep_rows)
+    ok, err = supabase_upsert("garmin_sleep", sleep_rows, start_date, end_date)
     if not ok:
         print(f"    [ERROR] {err}")
         upsert_results.append(("garmin_sleep", err))
@@ -233,7 +233,7 @@ def sync_data(garmin, start_date: str, end_date: str):
         upsert_results.append(("garmin_sleep", None))
 
     print("  garmin_activities...")
-    ok, err = supabase_upsert("garmin_activities", activity_rows)
+    ok, err = supabase_upsert("garmin_activities", activity_rows, start_date, end_date)
     if not ok:
         print(f"    [ERROR] {err}")
         upsert_results.append(("garmin_activities", err))
