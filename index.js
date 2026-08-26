@@ -518,7 +518,7 @@ async function guardarActividadSupabase(actividad) {
       Distancia: Number(actividad.distance || 0),
       elevacion: Number(actividad.elevation_gain || 0),
       'Tiempo en movimiento': Number(actividad.moving_time || actividad.elapsed_time || 0),
-      user_id: CONFIG.CHAT_ID || 'default'
+      user_id: CONFIG.ATHLETE_USER_ID || CONFIG.CHAT_ID || 'default'
     };
     
     const { error } = await supabase
@@ -600,6 +600,109 @@ async function sincronizarActividadesSupabase(limit = 10) {
     return { sincronizado: false, error: err.message };
   }
 }
+
+// ─── CAMBIO 2: FUENTE ÚNICA DE ACTIVIDADES REALES ──────────────
+// obtenerActividadesReales({ limite, dias, userId })
+//
+// Capa centralizada para leer actividades REALES desde la tabla
+// `actividades_guardadas` de Supabase. Destinada a ser la ÚNICA fuente
+// de actividades para los comandos (aún no conectada a ninguno).
+//
+// GARANTÍA DE ORDEN CANÓNICO:
+//   Devuelve SIEMPRE las actividades ordenadas ASCENDENTE por fecha
+//   (más antigua → más reciente), sea cual sea el orden en la BD.
+//
+// Parámetros (todos opcionales):
+//   limite : número máx. de actividades (se devuelven las MÁS RECIENTES)
+//   dias   : ventana temporal hacia atrás desde hoy (últimos X días)
+//   userId : filtra por user_id concreto. Si se omite NO filtra y devuelve
+//            todas las épocas presentes (actualmente conviven
+//            user_id='default' y user_id='939585578'; cada actividad lleva
+//            su campo user_id hasta completar la migración pendiente).
+//
+// Devuelve:
+//   Éxito : { ok: true,  total: N, actividades: [...] }
+//   Fallo : { ok: false, error: 'mensaje', actividades: [] }
+//
+// En caso de error: registra el problema, NO inventa datos y NO hace
+// fallback a Intervals.icu.
+//
+// Formato canónico de cada actividad:
+//   { id, fecha(ISO), tipo, tss, np, if, durMin, kj, distancia, elevacion, user_id }
+async function obtenerActividadesReales(options = {}) {
+  const { limite = null, dias = null, userId = null } = options;
+  try {
+    let query = supabase
+      .from('actividades_guardadas')
+      .select('*')
+      .order('Fecha', { ascending: false });
+
+    if (userId) query = query.eq('user_id', userId);
+    if (dias && Number(dias) > 0) {
+      const desde = new Date(Date.now() - Number(dias) * 24 * 60 * 60 * 1000);
+      query = query.gte('Fecha', desde.toISOString());
+    }
+    if (limite && Number(limite) > 0) query = query.limit(Number(limite));
+
+    const { data, error } = await query;
+    if (error) {
+      console.log('[obtenerActividadesReales] Error Supabase:', error.message);
+      return { ok: false, error: error.message, actividades: [] };
+    }
+    if (!data || data.length === 0) {
+      return { ok: true, total: 0, actividades: [] };
+    }
+
+    // Normalizar al formato canónico
+    const actividades = [];
+    for (const act of data) {
+      // Validación de fecha: si es inválida se omite SOLO este registro
+      if (!act.Fecha || isNaN(new Date(act.Fecha).getTime())) {
+        console.log('[obtenerActividadesReales] ⚠️ Actividad omitida por fecha inválida:', act.actividad_id || act.id || 'desconocido');
+        continue;
+      }
+      const tss = sanitizeNum(act.tss, 0, undefined, 0);
+      const np = sanitizeNum(act.np, 0, undefined, 0);
+      const ifVal = sanitizeNum(act.if_value, 0, undefined, 0);
+      const kj = sanitizeNum(act.kj, 0, undefined, 0);
+      const distancia = sanitizeNum(act.Distancia, 0, undefined, 0);
+      const elevacion = sanitizeNum(act.elevacion, 0, undefined, 0);
+      // La columna real en Supabase se llama "Tiempo en movimiento";
+      // moving_time como respaldo (mismo patrón que cargarHistorialCompleto).
+      const movingTime = sanitizeNum(act['Tiempo en movimiento'] ?? act.moving_time, 0, undefined, 0);
+      const elapsedTime = sanitizeNum(act.elapsed_time, 0, undefined, 0);
+      const durSeg = movingTime > 0 ? movingTime : elapsedTime;
+      const durMin = durSeg > 0 ? Math.round(durSeg / 60) : 0;
+
+      actividades.push({
+        id: act.actividad_id,
+        fecha: new Date(act.Fecha).toISOString(),
+        tipo: act.tipo || 'actividad',
+        tss,
+        np,
+        if: ifVal > 0 ? ifVal : (np > 0 ? np / CONFIG.FTP : 0),
+        durMin,
+        // CAMBIO 4/D6: segundos exactos, para consumidores que requieren la
+        // misma precisión que el antiguo acceso directo a
+        // 'Tiempo en movimiento' (p.ej. cálculo de weeklyHours).
+        durSeg,
+        kj,
+        distancia,
+        elevacion,
+        user_id: act.user_id
+      });
+    }
+
+    // ORDEN CANÓNICO OBLIGATORIO: ascendente por fecha
+    actividades.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+    return { ok: true, total: actividades.length, actividades };
+  } catch (err) {
+    console.log('[obtenerActividadesReales] ERROR:', err.toString());
+    return { ok: false, error: err.message, actividades: [] };
+  }
+}
+// ─── FIN CAMBIO 2 ──────────────────────────────────────────────
 
 // ─── VARIABLES GLOBALES ───
 const scriptProperties = {
@@ -2095,29 +2198,34 @@ async function calcularEstadoSistema(datos) {
   // ─── FUENTE PRIMARIA: actividades_guardadas (Supabase) ─────────
   // Usar Supabase como fuente de verdad para el volumen semanal.
   // Solo caemos a datos.activities (Intervals) si Supabase falla.
-  // NOTA: El campo Fecha puede contener timestamps completos (con hora y
-  // zona horaria). Para no perder actividades por el formato, se amplía el
-  // rango SQL ±1 día (cubre timestamps del lunes/domingo y desfases de zona)
-  // y después se valida la fecha normalizada en JavaScript.
+  // CAMBIO 4/D6: la obtención pasa por la FUENTE ÚNICA
+  // obtenerActividadesReales() (mismo filtro de user_id que la antigua
+  // consulta directa); la validación del rango semanal sigue en JavaScript.
   try {
-    const lunesStrSQL = formatDate(addDays(lunesEstaSemana, -1));
-    const domingoStrSQL = formatDate(addDays(domingoEstaSemana, 1));
-    const { data: actividadesSupabase, error: errAct } = await supabase
-      .from('actividades_guardadas')
-      .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || 'default')
-      .gte('Fecha', lunesStrSQL)
-      .lte('Fecha', domingoStrSQL);
+    // CAMBIO 4 / D6: FUENTE ÚNICA de actividades (obtenerActividadesReales)
+    // en lugar de consulta directa a actividades_guardadas.
+    //   - dias: 9 cubre siempre la semana actual completa (lunes→domingo)
+    //     con margen para timestamps/zona horaria (equivalente a la antigua
+    //     ventana SQL ±1 día).
+    //   - userId replica exactamente el filtro que tenía la consulta directa
+    //     (CONFIG.CHAT_ID || 'default').
+    // La validación del rango semanal real se mantiene en JavaScript,
+    // igual que antes, y las fórmulas de TSS/sesiones/horas no cambian:
+    // durSeg son los segundos exactos ('Tiempo en movimiento').
+    const resActs = await obtenerActividadesReales({
+      dias: 9,
+      userId: CONFIG.CHAT_ID || 'default'
+    });
 
-    if (!errAct && actividadesSupabase && actividadesSupabase.length > 0) {
-      // Fuente primaria: Supabase
-      actividadesSupabase.forEach((a) => {
+    if (resActs.ok && resActs.actividades && resActs.actividades.length > 0) {
+      // Fuente primaria: Fuente Única (actividades_guardadas vía Supabase)
+      resActs.actividades.forEach((a) => {
         // Normalizar la fecha en JS: si Fecha es timestamp completo, se
         // reduce a YYYY-MM-DD antes de decidir si pertenece a la semana.
-        const fechaStr = formatDate(new Date(a.Fecha));
+        const fechaStr = formatDate(new Date(a.fecha));
         if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
           const tss = safeNum(a.tss, 0);
-          const movingTime = safeNum(a['Tiempo en movimiento'] || a.moving_time, 0);
+          const movingTime = safeNum(a.durSeg, 0);
           if (tss > 0 || movingTime > 0) {
             weeklyTss += tss;
             weeklyHours += movingTime / 3600;
@@ -2128,7 +2236,7 @@ async function calcularEstadoSistema(datos) {
       console.log('[calcularEstadoSistema] ✅ TSS semanal desde Supabase:', weeklySessions, 'sesiones,', Math.round(weeklyTss), 'TSS');
     } else {
       // Fallback: datos.activities (Intervals)
-      const errorMsg = errAct ? `Error: ${errAct.message}` : 'Sin datos';
+      const errorMsg = (resActs && !resActs.ok) ? `Error: ${resActs.error}` : 'Sin datos';
       console.log('[calcularEstadoSistema] ⚠️ Supabase vacío o error, usando Intervals como fallback:', errorMsg);
       (datos.activities || []).forEach((a) => {
         const d = new Date(a.start_date_local || a.start_date || '');
@@ -4595,12 +4703,22 @@ async function cmdTraza() {
 
 async function cmdProgreso() {
   try {
-    await cargarHistorialCompleto();
-    const historial = obtenerHistorial();
-    if (historial.length < 5) {
+    // ─── CAMBIO 4 / D1: actividades reales desde la FUENTE ÚNICA ───
+    const res = await obtenerActividadesReales({});
+    if (!res.ok) {
+      await sendTelegram(`📊 *PROGRESO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
+      return;
+    }
+    const actividades = res.actividades; // orden ASC garantizado por la fuente única
+    if (actividades.length < 5) {
       await sendTelegram('📊 *PROGRESO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 5 entrenos para mostrar tendencias.');
       return;
     }
+
+    // FTP estimado/proyección: lógica INTACTA. Estas funciones aún se alimentan
+    // del historial combinado en memoria; se carga aquí SOLO como su entrada,
+    // NO como fuente de la lista de actividades mostrada abajo.
+    await cargarHistorialCompleto();
     
     let msg = '📊 *PROGRESO - EVOLUCIÓN*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     
@@ -4617,16 +4735,16 @@ async function cmdProgreso() {
     msg += `*🎯 PROYECCIÓN*\n`;
     msg += `• ${proy.mensaje}\n\n`;
     
-    const ultimos = historial.slice(-10);
+    // Array ASC garantizado → los últimos son los MÁS RECIENTES
+    const ultimos = actividades.slice(-10);
     msg += `*📈 ÚLTIMOS 10 ENTRENOS*\n`;
-    ultimos.forEach((h, idx) => {
-      const fecha = new Date(h.fecha);
+    ultimos.forEach((a) => {
+      const fecha = new Date(a.fecha);
       const fechaStr = `${String(fecha.getDate()).padStart(2, '0')}/${String(fecha.getMonth() + 1).padStart(2, '0')}`;
-      const tipo = h.entreno.tipo || 'N/A';
-      const tss = h.entreno.tss || 0;
-      const resultado = h.resultado || 0;
-      const emoji = resultado >= 80 ? '🟢' : resultado >= 60 ? '🟡' : '🔴';
-      msg += `• ${emoji} ${fechaStr} | ${tipo.toUpperCase()} | TSS:${tss} | ${resultado}%\n`;
+      // Emoji según TSS real de la actividad (mismo criterio que /historial)
+      const emoji = a.tss > 150 ? '🔥' : a.tss > 80 ? '✅' : '🟢';
+      const ifTxt = a.if > 0 ? ` | IF:${Math.round(a.if * 100)}%` : '';
+      msg += `• ${emoji} ${fechaStr} | ACTIVIDAD | TSS:${a.tss}${ifTxt} | ${a.durMin}min\n`;
     });
     
     await sendTelegramLong(msg);
@@ -4820,8 +4938,13 @@ async function cmdAlerta() {
 
 async function cmdTendencias() {
   try {
-    await cargarHistorialCompleto();
-    const historial = obtenerHistorial();
+    // ─── CAMBIO 4 / D2: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({});
+    if (!res.ok) {
+      await sendTelegram(`📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
+      return;
+    }
+    const historial = res.actividades; // orden ASC garantizado
     if (historial.length < 10) {
       await sendTelegram('📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 10 entrenos para mostrar tendencias.');
       return;
@@ -4829,23 +4952,25 @@ async function cmdTendencias() {
     
     let msg = '📈 *TENDENCIAS - 90 DÍAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     
-    let totalTSS = 0, totalRPE = 0, totalReadiness = 0;
+    // Datos reales disponibles: tss, np, if, durMin. No usar RPE/readiness (no existen en actividades_guardadas).
+    let totalTSS = 0, totalDur = 0, totalIF = 0;
     historial.slice(-20).forEach(h => {
-      totalTSS += h.entreno?.tss || 0;
-      totalRPE += h.feedback?.rpe || 5;
-      totalReadiness += h.entreno?.readiness || 50;
+      totalTSS += h.tss || 0;
+      totalDur += h.durMin || 0;
+      totalIF += h.if || 0;
     });
     const n = Math.min(historial.length, 20);
     
-    msg += `*📊 MEDIAS (últimos ${n} entrenos)*\n`;
+    msg += `*📊 MEDIAS (últimos ${n} actividades)*\n`;
     msg += `• TSS medio: ${Math.round(totalTSS/n)}\n`;
-    msg += `• RPE medio: ${(totalRPE/n).toFixed(1)}\n`;
-    msg += `• Readiness media: ${Math.round(totalReadiness/n)}/100\n\n`;
+    msg += `• Duración media: ${Math.round(totalDur/n)} min\n`;
+    msg += `• IF medio: ${(totalIF/n).toFixed(2)}\n\n`;
     
+    // Array ASC → los últimos N son los MÁS RECIENTES. Comparar 10 recientes vs 10 anteriores.
     const recientes = historial.slice(-10);
     const antiguos = historial.slice(-20, -10);
-    const tssRec = recientes.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
-    const tssAnt = antiguos.reduce((sum, h) => sum + (h.entreno?.tss || 0), 0) / 10;
+    const tssRec = recientes.reduce((sum, h) => sum + (h.tss || 0), 0) / recientes.length;
+    const tssAnt = antiguos.length > 0 ? antiguos.reduce((sum, h) => sum + (h.tss || 0), 0) / antiguos.length : 0;
     
     msg += `*📈 TENDENCIA DE CARGA*\n`;
     if (tssRec > tssAnt * 1.2) msg += '• ⬆️ Carga AUMENTANDO - Vigila fatiga\n';
@@ -4922,22 +5047,32 @@ async function cmdSemanaPasada() {
     const lunesStr = formatDate(lunesSemanaPasada);
     const domingoStr = formatDate(domingoSemanaPasada);
     
-    // Intentar obtener de Supabase primero
+    // ─── CAMBIO 4 / D7: FUENTE ÚNICA + filtrado correcto de fechas ───
+    // La capa única devuelve ASC. Traemos ~13 días (margen para cubrir la semana
+    // pasada con timezone) y filtramos en JS reduciendo el timestamp a YYYY-MM-DD:
+    // la comparación de rango lunes→domingo es inclusiva y acepta actividades del
+    // domingo por la tarde/noche (el límite ya no depende de strings sobre la columna
+    // timestamp como hacía la consulta antigua con lte('Fecha', domingoStr)).
     let actividades = [];
     try {
-      const { data, error } = await supabase
-        .from('actividades_guardadas')
-        .select('*')
-        .eq('user_id', CONFIG.CHAT_ID || 'default')
-        .gte('Fecha', lunesStr)
-        .lte('Fecha', domingoStr)
-        .order('Fecha', { ascending: true });
-      
-      if (!error && data && data.length > 0) {
-        actividades = data;
+      const res = await obtenerActividadesReales({ dias: 13 });
+      if (res.ok) {
+        actividades = res.actividades
+          .filter(a => {
+            const fechaStr = formatDate(new Date(a.fecha));
+            return fechaStr >= lunesStr && fechaStr <= domingoStr;
+          })
+          .map(a => ({
+            Fecha: a.fecha,
+            tss: a.tss || 0,
+            np: a.np || 0,
+            if_value: a.if || 0,
+            kj: a.kj || 0,
+            tipo: a.tipo || 'actividad'
+          }));
       }
     } catch (e) {
-      console.log('[cmdSemanaPasada] Error en Supabase:', e);
+      console.log('[cmdSemanaPasada] Error en obtenerActividadesReales:', e.message);
     }
     
     // Si no hay en Supabase, buscar en memoria/historial
@@ -5109,41 +5244,36 @@ async function cmdSemanaPasada() {
 
 async function cmdHistorial() {
   try {
-    // Obtener actividades de Supabase
-    const { data, error } = await supabase
-      .from('actividades_guardadas')
-      .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || 'default')
-      .order('Fecha', { ascending: false })
-      .limit(20);
-      
-    if (error) {
-      console.log('[cmdHistorial] Error:', error);
-      await sendTelegram(`❌ Error al obtener las actividades: ${error.message}`);
+    // ─── CAMBIO 4 / D5: FUENTE ÚNICA de actividades reales ───
+    const res = await obtenerActividadesReales({ limite: 20 });
+    if (!res.ok) {
+      console.log('[cmdHistorial] Error:', res.error);
+      await sendTelegram(`❌ Error al obtener las actividades: ${res.error}`);
       return;
     }
-    
-    if (!data || data.length === 0) {
+
+    if (!res.actividades || res.actividades.length === 0) {
       await sendTelegram('📊 *HISTORIAL DE ACTIVIDADES*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNo hay actividades guardadas en Supabase.\n\nEjecuta `/sync` para sincronizar actividades de Intervals.icu.');
       return;
     }
+
+    // La fuente única devuelve ASC → se invierte para pintar DESC (más reciente primero)
+    const data = [...res.actividades].reverse();
     
     let msg = '📊 *HISTORIAL DE ACTIVIDADES*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `📋 *Total en BD:* ${data.length} mostradas\n\n`;
     
     data.forEach((act, idx) => {
-      const fecha = act.Fecha ? new Date(act.Fecha).toLocaleDateString('es-ES') : 'Sin fecha';
+      const fecha = act.fecha ? new Date(act.fecha).toLocaleDateString('es-ES') : 'Sin fecha';
       const tss = (act.tss != null && act.tss !== undefined) ? act.tss : 'N/A';
       const np = (act.np != null && act.np !== undefined && act.np > 0) ? act.np : 'N/A';
-      // Calcular IF = NP / FTP si no existe
+      // IF ya viene normalizado por la fuente única (if_value > 0 o NP/FTP)
       let ifVal = 'N/A';
-      if (act.if_value && act.if_value > 0) {
-        ifVal = (act.if_value * 100).toFixed(0) + '%';
-      } else if (np !== 'N/A' && np > 0) {
-        ifVal = ((np / CONFIG.FTP) * 100).toFixed(0) + '%';
+      if (act.if && act.if > 0) {
+        ifVal = (act.if * 100).toFixed(0) + '%';
       }
-      const id = act.actividad_id || 'Sin ID';
+      const id = act.id || 'Sin ID';
       
       const tssNum = typeof tss === 'number' ? tss : 0;
       const emoji = tssNum > 150 ? '🔥' : tssNum > 80 ? '✅' : '🟢';
@@ -5666,21 +5796,29 @@ async function cmdGarmin() {
 
 async function cmdExportar() {
   try {
-    await cargarHistorialCompleto();
-    const historial = obtenerHistorial();
+    // ─── CAMBIO 4 / D4: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({});
+    if (!res.ok) {
+      await sendTelegram(`📊 *EXPORTAR DATOS DEL SISTEMA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
+      return;
+    }
+    const historial = res.actividades; // orden ASC garantizado
     if (historial.length === 0) {
       await sendTelegram('No hay datos para exportar.');
       return;
     }
     let msg = '📊 *EXPORTAR DATOS DEL SISTEMA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    msg += `*📋 RESUMEN DE ${historial.length} ENTRENOS*\n\n`;
-    const data = historial.slice(-10).map((h) => ({
-      fecha: h.fecha,
-      tipo: h.entreno.tipo,
-      rpe: h.feedback.rpe,
-      resultado: h.resultado,
-      peso: h.peso || 1.0,
-      contexto: h.contexto || {}
+    msg += `*📋 RESUMEN DE ${historial.length} ACTIVIDADES*\n\n`;
+    const data = historial.slice(-10).map((a) => ({
+      fecha: a.fecha,
+      tipo: a.tipo || 'actividad',
+      tss: a.tss,
+      np: a.np,
+      if: a.if,
+      durMin: a.durMin,
+      kj: a.kj,
+      distancia: a.distancia,
+      elevacion: a.elevacion
     }));
     msg += '*💾 DATOS COMPLETOS (JSON)*\n```\n' + JSON.stringify(data, null, 2) + '\n```\n';
     msg += '\n📱 *Usa /debug para ver más datos técnicos.*';
@@ -5697,23 +5835,29 @@ async function cmdExportar() {
 
 async function cmdDensidad() {
   try {
-    await cargarHistorialCompleto();
-    const historial = obtenerHistorial();
+    // ─── CAMBIO 4 / D3: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({});
+    if (!res.ok) {
+      await sendTelegram(`📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
+      return;
+    }
+    const historial = res.actividades; // orden ASC garantizado
     if (historial.length < 3) {
       await sendTelegram('📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 3 entrenos para calcular densidad.');
       return;
     }
     
+    // Array ASC → los últimos 10 son los MÁS RECIENTES (antes con array DESC cogía las antiguas)
     const ultimos = historial.slice(-10);
     let tssTotal = 0;
     let horasTotal = 0;
     
     ultimos.forEach(h => {
-      tssTotal += h.entreno?.tss || 0;
-      // Intentar obtener duración de varias fuentes
-      let durMin = h.entreno?.duracionTotalMin || h.entreno?.durMin || 0;
+      tssTotal += h.tss || 0;
+      // Duración real en minutos (formato canónico)
+      let durMin = h.durMin || 0;
       // Si no hay duración pero hay TSS, estimar ~1h por sesión (65 TSS/hora en Z2)
-      if (durMin <= 0 && (h.entreno?.tss || 0) > 0) {
+      if (durMin <= 0 && (h.tss || 0) > 0) {
         durMin = 60;
       }
       horasTotal += durMin / 60;
@@ -6802,17 +6946,21 @@ async function analizarCumplimientoPlan() {
       return { tieneDesviaciones: false, porcentajeCumplimiento: 100 };
     }
     
-    // Obtener actividades sincronizadas de los últimos 7 días
-    const { data: actividades, error } = await supabase
-      .from('actividades_guardadas')
-      .select('*')
-      .eq('user_id', CONFIG.CHAT_ID || 'default')
-      .order('Fecha', { ascending: false })
-      .limit(7);
+    // Obtener las 7 actividades más recientes del usuario
+    // CAMBIO 4 / D8: FUENTE ÚNICA de actividades (obtenerActividadesReales)
+    // en lugar de consulta directa a actividades_guardadas. Reproduce la
+    // semántica anterior: mismo filtro de user_id y selección de las 7 más
+    // recientes (la fuente única hace ORDER BY Fecha DESC + LIMIT 7 internos
+    // con limite: 7, sin ventana temporal dias).
+    const resActs = await obtenerActividadesReales({
+      limite: 7,
+      userId: CONFIG.CHAT_ID || 'default'
+    });
     
-    if (error || !actividades || actividades.length === 0) {
+    if (!resActs.ok || !resActs.actividades || resActs.actividades.length === 0) {
       return { tieneDesviaciones: false, porcentajeCumplimiento: 100 };
     }
+    const actividades = resActs.actividades;
     
     // Obtener el plan generado para cada día (desde el historial de decisiones)
     const historial = obtenerHistorial();
