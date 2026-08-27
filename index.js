@@ -372,6 +372,17 @@ async function cargarHistorialCompleto() {
           return;
         }
 
+        // ─── FILTRO CICLISTA (rendimiento, NO display) ──────────
+        // El historial alimenta los CÁLCULOS de rendimiento ciclista
+        // (FTP estimado, proyección, calidad semanal). Para no contaminarlos,
+        // las actividades que esActividadCiclista considere NO ciclistas
+        // (Walk, Run, TrailRun, VirtualRun, Hike) se EXCLUYEN aquí.
+        // Este historial NO es la fuente del /historial (que sí muestra todo).
+        if (!esActividadCiclista(act.Tipo)) {
+          console.log('[cargarHistorialCompleto] ⚠️ Actividad NO ciclista omitida de cálculos de rendimiento:', act.Tipo || 'desconocido', act.actividad_id || act.id || 'desconocido');
+          return;
+        }
+
         // ─── #12: VALIDAR CAMPOS NUMÉRICOS ──────────────────────
         // Los valores deben ser finitos y no negativos. Si un campo
         // secundario es inválido se sustituye por 0 (seguro matemáticamente).
@@ -630,7 +641,7 @@ async function sincronizarActividadesSupabase(limit = 10) {
 // Formato canónico de cada actividad:
 //   { id, fecha(ISO), tipo, tss, np, if, durMin, kj, distancia, elevacion, user_id }
 async function obtenerActividadesReales(options = {}) {
-  const { limite = null, dias = null, userId = null } = options;
+  const { limite = null, dias = null, userId = null, soloCiclismo = false } = options;
   try {
     let query = supabase
       .from('actividades_guardadas')
@@ -653,12 +664,18 @@ async function obtenerActividadesReales(options = {}) {
       return { ok: true, total: 0, actividades: [] };
     }
 
-    // Normalizar al formato canónico
+        // Normalizar al formato canónico
     const actividades = [];
     for (const act of data) {
       // Validación de fecha: si es inválida se omite SOLO este registro
       if (!act.Fecha || isNaN(new Date(act.Fecha).getTime())) {
         console.log('[obtenerActividadesReales] ⚠️ Actividad omitida por fecha inválida:', act.actividad_id || act.id || 'desconocido');
+        continue;
+      }
+      // Clasificación deportiva: al corregir `Tipo` (no `tipo`) podemos
+      // excluir actividades no ciclistas cuando se pide explícitamente.
+      // null/vacío se mantiene como ciclismo (actividades reales con potencia).
+      if (soloCiclismo && !esActividadCiclista(act.Tipo)) {
         continue;
       }
       const tss = sanitizeNum(act.tss, 0, undefined, 0);
@@ -677,7 +694,7 @@ async function obtenerActividadesReales(options = {}) {
       actividades.push({
         id: act.actividad_id,
         fecha: new Date(act.Fecha).toISOString(),
-        tipo: act.tipo || 'actividad',
+                         tipo: act.Tipo || 'actividad',
         tss,
         np,
         if: ifVal > 0 ? ifVal : (np > 0 ? np / CONFIG.FTP : 0),
@@ -767,6 +784,23 @@ function sanitizeNum(val, min, max, fallback) {
   if (min !== undefined && n < min) return fallback;
   if (max !== undefined && n > max) return fallback;
   return n;
+}
+
+// ─── CLASIFICACIÓN DEPORTIVA ────────────────────────────────
+// Único mecanismo de clasificación de actividades por deporte.
+// Reutilizable tanto para actividades de Supabase (act.Tipo) como de
+// Intervals.icu (activity.type).
+//
+// Regla: NO clasificar por nombre de actividad.
+// - null/undefined/vacío  → CICLISMO (compatibilidad con actividades reales
+//   cuyo Tipo no se grabó pero que contienen potencia real: np>0).
+// - CICLISMO              → Ride, VirtualRide (y otros tipos ciclistas futuros).
+// - NO CICLISMO (excluir) → Walk, Run, TrailRun, VirtualRun, Hike.
+function esActividadCiclista(tipoStr) {
+  const t = (tipoStr == null ? '' : String(tipoStr)).trim().toLowerCase();
+  if (t === '') return true; // null/vacío → ciclismo (ver nota de arriba)
+  const noCiclismo = ['walk', 'run', 'trailrun', 'virtualrun', 'hike'];
+  return !noCiclismo.includes(t);
 }
 
 function formatDate(d) {
@@ -2212,9 +2246,10 @@ async function calcularEstadoSistema(datos) {
     // La validación del rango semanal real se mantiene en JavaScript,
     // igual que antes, y las fórmulas de TSS/sesiones/horas no cambian:
     // durSeg son los segundos exactos ('Tiempo en movimiento').
-    const resActs = await obtenerActividadesReales({
+            const resActs = await obtenerActividadesReales({
       dias: 9,
-      userId: CONFIG.CHAT_ID || 'default'
+      userId: CONFIG.CHAT_ID || 'default',
+      soloCiclismo: true
     });
 
     if (resActs.ok && resActs.actividades && resActs.actividades.length > 0) {
@@ -2381,10 +2416,15 @@ function calcularACWR(activities) {
   if (!activities || !Array.isArray(activities) || activities.length === 0) {
     return { ratio: 1.0 };
   }
-  const ahora = new Date();
+    const ahora = new Date();
   let tss7dias = 0;
   let tss28dias = 0;
-  activities.forEach(a => {
+  // Filtrar a actividades ciclistas (type de Intervals.icu). Excluye Walk/Run/Hike.
+  const ciclistas = activities.filter(a => esActividadCiclista(a.type));
+  if (ciclistas.length === 0) {
+    return { ratio: 1.0 };
+  }
+  ciclistas.forEach(a => {
     const fecha = new Date(a.start_date_local || a.start_date || '');
     const diff = (ahora - fecha) / (1000 * 60 * 60 * 24);
     const tss = safeNum(a.icu_training_load, 0);
@@ -4494,15 +4534,21 @@ async function cmdAnalizar(args) {
       await sendTelegram('🔍 *BUSCANDO ÚLTIMA ACTIVIDAD...*\n━━━━━━━━━━━━━━━━━━━━━━\n\nObteniendo tu última actividad de Intervals.icu...');
       
       try {
-        const activities = await fetchActivities(10);
+                const activities = await fetchActivities(10);
         if (!activities || activities.length === 0) {
           await sendTelegram('❌ No se encontraron actividades recientes.\n\nUsa: `/analizar [ID]` con un ID específico.');
+          return;
+        }
+        // Filtrar a actividades ciclistas (Intervals: activity.type). Excluye Walk/Run/Hike.
+        const actividadesCiclismo = (activities || []).filter(a => esActividadCiclista(a.type));
+        if (!actividadesCiclismo.length) {
+          await sendTelegram('❌ No se encontraron actividades de ciclismo recientes.\n\nUsa: `/analizar [ID]` con un ID específico.');
           return;
         }
         
         // Buscar actividad con datos (más permisivo)
         let candidata = null;
-        for (const act of activities) {
+        for (const act of actividadesCiclismo) {
           const duration = safeNum(act.moving_time, 0);
           if (duration > 60) {
             candidata = act;
@@ -4566,9 +4612,10 @@ async function cmdAnalizar(args) {
     // ─── OBTENER ACTIVIDADES PARA COMPARATIVA ─────────────────────
     let comparativa = null;
     try {
-      const activities = await fetchActivities(5);
-      if (activities && activities.length > 1) {
-        comparativa = compararUltimasSesiones(activities);
+            const activities = await fetchActivities(5);
+      const actividadesCiclismo = (activities || []).filter(a => esActividadCiclista(a.type));
+      if (actividadesCiclismo && actividadesCiclismo.length > 1) {
+        comparativa = compararUltimasSesiones(actividadesCiclismo);
       }
     } catch (e) {
       console.log('[cmdAnalizar] No se pudo obtener comparativa:', e.message);
@@ -4703,8 +4750,8 @@ async function cmdTraza() {
 
 async function cmdProgreso() {
   try {
-    // ─── CAMBIO 4 / D1: actividades reales desde la FUENTE ÚNICA ───
-    const res = await obtenerActividadesReales({});
+        // ─── CAMBIO 4 / D1: actividades reales desde la FUENTE ÚNICA ───
+    const res = await obtenerActividadesReales({ soloCiclismo: true });
     if (!res.ok) {
       await sendTelegram(`📊 *PROGRESO*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
       return;
@@ -4938,8 +4985,8 @@ async function cmdAlerta() {
 
 async function cmdTendencias() {
   try {
-    // ─── CAMBIO 4 / D2: actividades reales desde la FUENTE ÚNICA (ASC) ───
-    const res = await obtenerActividadesReales({});
+        // ─── CAMBIO 4 / D2: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({ soloCiclismo: true });
     if (!res.ok) {
       await sendTelegram(`📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
       return;
@@ -5055,7 +5102,8 @@ async function cmdSemanaPasada() {
     // timestamp como hacía la consulta antigua con lte('Fecha', domingoStr)).
     let actividades = [];
     try {
-      const res = await obtenerActividadesReales({ dias: 13 });
+      // CAMBIO filto ciclista (aprobado): solo actividades ciclistas en los cálculos de /semanapasada
+      const res = await obtenerActividadesReales({ dias: 13, soloCiclismo: true });
       if (res.ok) {
         actividades = res.actividades
           .filter(a => {
@@ -5081,6 +5129,8 @@ async function cmdSemanaPasada() {
       historial.forEach(h => {
         const fecha = new Date(h.fecha);
         const fechaStr = formatDate(fecha);
+        // Filtrar a actividades ciclistas en los cálculos de /semanapasada
+        if (!esActividadCiclista(h.entreno?.tipo)) return;
         if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
           actividades.push({
             Fecha: h.fecha,
@@ -5102,6 +5152,8 @@ async function cmdSemanaPasada() {
           activities.forEach(act => {
             const fecha = new Date(act.start_date_local || act.start_date || '');
             const fechaStr = formatDate(fecha);
+            // Filtrar a actividades ciclistas en los cálculos de /semanapasada
+            if (!esActividadCiclista(act.type)) return;
             if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
               actividades.push({
                 Fecha: act.start_date_local || act.start_date,
@@ -5277,7 +5329,9 @@ async function cmdHistorial() {
       
       const tssNum = typeof tss === 'number' ? tss : 0;
       const emoji = tssNum > 150 ? '🔥' : tssNum > 80 ? '✅' : '🟢';
-      msg += `${idx + 1}. ${emoji} *${fecha}* | TSS: ${tss} | NP: ${np}W | IF: ${ifVal}\n`;
+      // Mostrar el tipo real de actividad (Ride, VirtualRide, Walk, Run, ...)
+      const tipoTxt = (act.tipo && act.tipo !== 'actividad' && act.tipo !== 'desconocido') ? act.tipo : '';
+      msg += `${idx + 1}. ${emoji} *${fecha}* | TSS: ${tss} | NP: ${np}W | IF: ${ifVal}${tipoTxt ? ` | Tipo: ${tipoTxt}` : ''}\n`;
       msg += `   ID: \`${id}\`\n`;
     });
     
@@ -5796,8 +5850,8 @@ async function cmdGarmin() {
 
 async function cmdExportar() {
   try {
-    // ─── CAMBIO 4 / D4: actividades reales desde la FUENTE ÚNICA (ASC) ───
-    const res = await obtenerActividadesReales({});
+        // ─── CAMBIO 4 / D4: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({ soloCiclismo: true });
     if (!res.ok) {
       await sendTelegram(`📊 *EXPORTAR DATOS DEL SISTEMA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
       return;
@@ -5835,8 +5889,8 @@ async function cmdExportar() {
 
 async function cmdDensidad() {
   try {
-    // ─── CAMBIO 4 / D3: actividades reales desde la FUENTE ÚNICA (ASC) ───
-    const res = await obtenerActividadesReales({});
+        // ─── CAMBIO 4 / D3: actividades reales desde la FUENTE ÚNICA (ASC) ───
+    const res = await obtenerActividadesReales({ soloCiclismo: true });
     if (!res.ok) {
       await sendTelegram(`📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nError obteniendo actividades: ${res.error}`);
       return;
@@ -6952,9 +7006,10 @@ async function analizarCumplimientoPlan() {
     // semántica anterior: mismo filtro de user_id y selección de las 7 más
     // recientes (la fuente única hace ORDER BY Fecha DESC + LIMIT 7 internos
     // con limite: 7, sin ventana temporal dias).
-    const resActs = await obtenerActividadesReales({
+            const resActs = await obtenerActividadesReales({
       limite: 7,
-      userId: CONFIG.CHAT_ID || 'default'
+      userId: CONFIG.CHAT_ID || 'default',
+      soloCiclismo: true
     });
     
     if (!resActs.ok || !resActs.actividades || resActs.actividades.length === 0) {
