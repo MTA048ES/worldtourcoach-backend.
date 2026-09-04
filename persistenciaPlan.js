@@ -114,6 +114,31 @@ async function getPlanPrevistoDia(userId, fecha) {
   }
 }
 
+// → { ok: true, planes: filas } | { ok: false } (error Supabase / sin cliente).
+// Una única consulta de solo lectura: todas las fechas pedidas en un solo .in().
+// No modifica la firma ni semántica de getPlanPrevistoDia().
+async function getPlanesPrevistosFechas(userId, fechas) {
+  try {
+    const c = getCliente();
+    if (!c || !userId || !Array.isArray(fechas) || fechas.length === 0) {
+      return { ok: false };
+    }
+    const { data, error } = await c
+      .from(TABLA_PLAN)
+      .select('*')
+      .eq('user_id', userId)
+      .in('fecha', fechas);
+    if (error) {
+      console.log('[persistenciaPlan] getPlanesPrevistosFechas:', error.message);
+      return { ok: false };
+    }
+    return { ok: true, planes: data || [] };
+  } catch (err) {
+    console.log('[persistenciaPlan] getPlanesPrevistosFechas (excepción):', err && err.message);
+    return { ok: false };
+  }
+}
+
 // ─── PLAN PREVISTO (congelación, SPEC §3.2) ─────────────────────
 // upsert con ignoreDuplicates: solo la primera decisión válida del día congela;
 // siguientes llamadas son no-op (el plan no se toca). /hoy repetido no re-congela.
@@ -262,6 +287,7 @@ async function registrarSustitucion(registro) {
 
 module.exports = {
   getPlanPrevistoDia,
+  getPlanesPrevistosFechas,
   congelarPlanPrevisto,
   getSustitucionesSemana,
   registrarSustitucion,

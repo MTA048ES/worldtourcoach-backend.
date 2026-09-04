@@ -107,7 +107,7 @@ const CONFIG = {
     pesoMinimo: 0.3,
     maxDiasAntiguos: 90
   },
-  
+
   // ─── PERIODIZACIÓN ESTRUCTURAL ───────────────────────────────
   PERIODO: {
     fase: 'base',
@@ -126,7 +126,7 @@ const CONFIG = {
       taper: 0
     }
   },
-  
+
   // ─── NUTRICIÓN AVANZADA ──────────────────────────────────────
   NUTRICION: {
     proteinaPostMaster: 40,
@@ -136,13 +136,13 @@ const CONFIG = {
     magnesio: '400mg/día (en calor)',
     creatina: '5g/día (para mantener masa muscular)'
   },
-  
+
   // ─── CLIMA WBGT ──────────────────────────────────────────────
   CLIMA: {
     diasAclimatacion: 10,
     factorReduccionBase: 0.85
   },
-  
+
   // ─── OPENROUTER AI ───────────────────────────────────────────
   OPENROUTER: {
     API_KEY: process.env.OPENROUTER_API_KEY,
@@ -238,19 +238,19 @@ async function guardarEntrenoSupabase(entreno, feedback, contexto) {
       comio_antes: contexto.comioAntes || 'no',
       user_id: CONFIG.CHAT_ID || 'default'
     };
-    
+
     const { error } = await supabase
       .from('historial_entrenos')
       .insert([data]);
-      
+
     if (error) {
       console.log('[guardarEntrenoSupabase] Error:', error);
       return { guardado: false, error: error.message };
     }
-    
+
     console.log('[guardarEntrenoSupabase] ✅ Historial guardado en Supabase');
     return { guardado: true };
-    
+
   } catch (err) {
     console.log('[guardarEntrenoSupabase] ERROR:', err);
     return { guardado: false, error: err.message };
@@ -342,7 +342,7 @@ function obtenerHistorial() {
   } catch (err) {
     console.log('[Historial] Error en memoria:', err);
   }
-  
+
   // Si no hay en memoria, devolver array vacío
   return [];
 }
@@ -357,7 +357,7 @@ async function cargarHistorialCompleto() {
       .eq('user_id', CONFIG.CHAT_ID || 'default')
       .order('Fecha', { ascending: false })
       .limit(100);
-    
+
     // 2. Cargar historial de entrenos (con feedback)
     const { data: entrenos, error: errEnt } = await supabase
       .from('historial_entrenos')
@@ -365,9 +365,9 @@ async function cargarHistorialCompleto() {
       .eq('user_id', CONFIG.CHAT_ID || 'default')
       .order('fecha', { ascending: false })
       .limit(100);
-    
+
     let historial = [];
-    
+
     // Convertir actividades de Intervals al formato del historial
     if (actividades && actividades.length > 0) {
       actividades.forEach(act => {
@@ -427,7 +427,7 @@ async function cargarHistorialCompleto() {
         });
       });
     }
-    
+
     // Añadir entrenos con feedback (tienen prioridad)
     if (entrenos && entrenos.length > 0) {
       entrenos.forEach(ent => {
@@ -485,13 +485,13 @@ async function cargarHistorialCompleto() {
         });
       });
     }
-    
+
     // Guardar en memoria para futuros accesos rápidos
     if (historial.length > 0) {
       setProperty('historial_entrenos', JSON.stringify(historial));
       console.log('[cargarHistorialCompleto] ✅ Cargados', historial.length, 'registros desde Supabase');
     }
-    
+
     return historial;
   } catch (err) {
     console.log('[cargarHistorialCompleto] ERROR:', err);
@@ -512,7 +512,7 @@ async function obtenerHistorialAsync() {
   } catch (e) {
     console.log('[obtenerHistorialAsync] Error en Supabase:', e);
   }
-  
+
   // Fallback a memoria
   try {
     const historial = getProperty('historial_entrenos');
@@ -538,19 +538,19 @@ async function guardarActividadSupabase(actividad) {
       'Tiempo en movimiento': Number(actividad.moving_time || actividad.elapsed_time || 0),
       user_id: CONFIG.ATHLETE_USER_ID || CONFIG.CHAT_ID || 'default'
     };
-    
+
     const { error } = await supabase
       .from('actividades_guardadas')
       .upsert([data], { onConflict: 'actividad_id' });
-      
+
     if (error) {
       console.log('[guardarActividadSupabase] Error:', error);
       return { guardado: false };
     }
-    
+
     console.log('[guardarActividadSupabase] ✅ Actividad guardada:', actividad.id);
     return { guardado: true };
-    
+
   } catch (err) {
     console.log('[guardarActividadSupabase] ERROR:', err);
     return { guardado: false };
@@ -566,10 +566,10 @@ async function obtenerActividadSupabase(actividadId) {
       .eq('actividad_id', actividadId)
       .eq('user_id', CONFIG.CHAT_ID || 'default')
       .single();
-      
+
     if (error) return null;
     return data;
-    
+
   } catch (err) {
     console.log('[obtenerActividadSupabase] ERROR:', err);
     return null;
@@ -580,12 +580,12 @@ async function obtenerActividadSupabase(actividadId) {
 async function sincronizarActividadesSupabase(limit = 10) {
   try {
     console.log('[sincronizarActividadesSupabase] Iniciando sincronización...');
-    
+
     const activities = await fetchActivities(limit);
     if (!activities || activities.length === 0) {
       return { sincronizado: false, mensaje: 'No hay actividades' };
     }
-    
+
     let guardadas = 0;
     let errores = 0;
     for (const act of activities) {
@@ -605,14 +605,14 @@ async function sincronizarActividadesSupabase(limit = 10) {
         console.log('[sincronizarActividadesSupabase] Error con actividad', act.id, e.message);
       }
     }
-    
+
     if (errores > 0) {
       console.log(`[sincronizarActividadesSupabase] ⚠️ ${errores} actividades no se pudieron guardar`);
     }
-    
+
     console.log(`[sincronizarActividadesSupabase] ✅ ${guardadas} actividades sincronizadas`);
     return { sincronizado: true, total: guardadas };
-    
+
   } catch (err) {
     console.log('[sincronizarActividadesSupabase] ERROR:', err);
     return { sincronizado: false, error: err.message };
@@ -840,7 +840,7 @@ const TIMEOUTS = {
 async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -902,7 +902,7 @@ function contarSesionesCalidadSemana() {
   const lunesStr = formatDate(lunesEstaSemana);
   const domingoEstaSemana = new Date(lunesEstaSemana.getTime() + 6 * 86400000);
   const domingoStr = formatDate(domingoEstaSemana);
-  
+
   let contador = 0;
   historial.forEach(h => {
     const fecha = new Date(h.fecha);
@@ -912,20 +912,20 @@ function contarSesionesCalidadSemana() {
       if (intensidad > 0.85) contador++;
     }
   });
-  
+
   return contador;
 }
 
 function puedeHacerCalidad(estado, restricciones) {
   if (restricciones.prohibirIntensidad || restricciones.forzarZ2) return false;
-  
+
   const maxCalidad = getMaxSesionesCalidad();
   const sesionesCalidad = contarSesionesCalidadSemana();
-  
+
   if (sesionesCalidad >= maxCalidad) return false;
   if (getFaseActual() === 'base' && estado.tsb < 15) return false;
   if (getFaseActual() === 'taper') return false;
-  
+
   return true;
 }
 
@@ -936,20 +936,20 @@ function puedeHacerCalidad(estado, restricciones) {
 function calcularFTPEstimado() {
   const historial = obtenerHistorial();
   if (historial.length < 5) return CONFIG.FTP;
-  
+
   // Calcular semanas de entrenamiento consistentes
   // Master 40+: mejora realista ~1.5W por mes de entrenamiento estructurado
   const semanasEntrenando = Math.min(Math.round(historial.length / 3.5), 48); // ~3.5 sesiones/semana, max 48 semanas
   const mejoraMensual = CONFIG.AGE_YEARS > 40 ? 1.5 : 3.0;
   const mesesEntrenando = Math.max(1, Math.round(semanasEntrenando / 4));
   const incremento = Math.round(mejoraMensual * mesesEntrenando);
-  
+
   // Limitar por el TSS acumulado real (no puede mejorar sin carga)
   let tssTotal = 0;
   historial.forEach(h => { tssTotal += h.entreno?.tss || 0; });
   const factorCarga = Math.min(tssTotal / 1000, 1.0); // Necesita ~1000 TSS para empezar a ver mejora
   const ftpEstimado = Math.round(CONFIG.FTP + (incremento * factorCarga));
-  
+
   // No puede superar el histórico ni bajar del FTP inicial
   return Math.min(Math.max(ftpEstimado, CONFIG.FTP), CONFIG.FTP_HISTORICO.valor);
 }
@@ -959,14 +959,14 @@ function calcularProyeccionObjetivo() {
   const ftpObjetivo = CONFIG.FTP_HISTORICO.valor || 296;
   const ftpEstimado = calcularFTPEstimado();
   const diff = ftpObjetivo - ftpEstimado;
-  
+
   if (diff <= 0) {
     return { semanas: 0, alcanzado: true, mensaje: '🎯 ¡Objetivo alcanzado!' };
   }
-  
+
   const ritmoMejora = CONFIG.AGE_YEARS > 40 ? 2.0 : 3.0;
   const semanas = Math.ceil(diff / ritmoMejora);
-  
+
   return {
     semanas: semanas,
     alcanzado: false,
@@ -983,7 +983,7 @@ function calcularHorasRecuperacion(tss, edad, sleepQuality) {
   horas += Math.max(0, (edad - 30) * 0.2);
   if (sleepQuality === 1) horas *= 1.3;
   else if (sleepQuality === 2) horas *= 1.1;
-  
+
   return Math.round(horas);
 }
 
@@ -993,7 +993,7 @@ function calcularSiguienteEntreno(horasRecuperacion) {
   const hora = siguiente.getHours();
   const min = String(siguiente.getMinutes()).padStart(2, '0');
   const fecha = siguiente.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-  
+
   return `📅 ${fecha} a las ${hora}:${min}h`;
 }
 
@@ -1004,16 +1004,16 @@ function calcularSiguienteEntreno(horasRecuperacion) {
 function calcularHeatIndex(temp, humedad) {
   if (!temp || typeof temp !== 'number') return temp;
   if (!humedad || typeof humedad !== 'number') humedad = 50;
-  
+
   // La fórmula de Heat Index (NOAA) usa Fahrenheit.
   // Convertimos Celsius → Fahrenheit, calculamos, y volvemos a Celsius.
   const T = (temp * 9/5) + 32;
   const RH = humedad;
-  
-  const HI_F = -42.379 + 2.04901523*T + 10.14333127*RH - 0.22475541*T*RH 
-            - 0.00683783*T*T - 0.05481717*RH*RH + 0.00122874*T*T*RH 
+
+  const HI_F = -42.379 + 2.04901523*T + 10.14333127*RH - 0.22475541*T*RH
+            - 0.00683783*T*T - 0.05481717*RH*RH + 0.00122874*T*T*RH
             + 0.00085282*T*RH*RH - 0.00000199*T*T*RH*RH;
-  
+
   // Convertir de vuelta a Celsius
   return Math.round((HI_F - 32) * 5/9);
 }
@@ -1066,7 +1066,7 @@ async function chatConIA(prompt, contexto = '') {
         const e = state.estado;
         const n = state.nutricion;
         const w = state.workout;
-        
+
         contextoSistema = `
 CONTEXTO REAL DEL SISTEMA (DATOS DE HOY):
 ══════════════════════════════════━━════
@@ -1156,7 +1156,7 @@ INSTRUCCIONES:
       const modelo = modelos[i];
       try {
         console.log(`[OpenRouter] 📤 Intentando modelo ${i+1}/${maxModelos}: ${modelo}`);
-        
+
         const response = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -1179,25 +1179,25 @@ INSTRUCCIONES:
           const data = await response.json();
           const respuesta = data.choices?.[0]?.message?.content || 'Sin respuesta';
           console.log(`[OpenRouter] ✅ ¡ÉXITO con modelo: ${modelo}`);
-          
+
           const result = {
             success: true,
             mensaje: respuesta,
             modelo: modelo
           };
-          
+
           // Guardar en cache
           cacheIA.set(cacheKey, {
             timestamp: Date.now(),
             result: result
           });
-          
+
           // Limitar tamaño del cache (50 entradas)
           if (cacheIA.size > 50) {
             const firstKey = cacheIA.keys().next().value;
             cacheIA.delete(firstKey);
           }
-          
+
           return result;
         } else {
           const errorText = await response.text();
@@ -1232,7 +1232,7 @@ INSTRUCCIONES:
 async function cmdIA(args) {
   try {
     const prompt = args.join(' ');
-    
+
     if (!prompt || prompt.length === 0) {
       await sendTelegram(`🤖 *WORLD TOUR COACH - ASISTENTE IA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`);
       await sendTelegram(`La IA conoce tu estado real: TSB, CTL, readiness, nutrición, clima y fase de entrenamiento.\n\n`);
@@ -1253,11 +1253,11 @@ async function cmdIA(args) {
     // DEBUG: Verificar si la API key está cargada
     console.log('[cmdIA] 🔍 DEBUG - OPENROUTER_API_KEY:', CONFIG.OPENROUTER.API_KEY ? '✅ Presente' : '❌ AUSENTE');
     console.log('[cmdIA] 🔍 DEBUG - process.env.OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? '✅ Presente' : '❌ AUSENTE');
-    
+
     await sendTelegram('🤔 *Pensando...*\nConsultando a la IA...');
 
     const resultado = await chatConIA(prompt);
-    
+
     if (resultado.success) {
       let msg = `🤖 *RESPUESTA IA*\n`;
       msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
@@ -1294,7 +1294,7 @@ async function sendTelegram(text) {
 
   try {
     console.log(`[sendTelegram] 📤 Enviando mensaje (${safeText.length} chars)...`);
-    
+
     const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1320,11 +1320,11 @@ async function sendTelegram(text) {
           text: safeText.replace(/[*_`\[\]]/g, ''),
         })
       }, TIMEOUTS.TELEGRAM);
-      
+
       const response2Text = await response2.text();
       console.log(`[sendTelegram] 📥 Segundo intento status: ${response2.status}`);
       console.log(`[sendTelegram] 📥 Segundo intento body: ${response2Text.substring(0, 200)}`);
-      
+
       if (response2.ok) {
         console.log('[sendTelegram] ✅ Segundo intento exitoso');
         return { success: true, retry: true };
@@ -1333,10 +1333,10 @@ async function sendTelegram(text) {
         return { success: false, error: response2Text };
       }
     }
-    
+
     console.log('[sendTelegram] ✅ Mensaje enviado exitosamente');
     return { success: true };
-    
+
   } catch(e) {
     console.log('[sendTelegram] ❌ ERROR de red:', e.toString());
     return { success: false, error: e.toString() };
@@ -1798,12 +1798,12 @@ async function obtenerDatosGarminSupabase() {
       .eq('user_id', CONFIG.ATHLETE_USER_ID)
       .eq('date', hoy)
       .limit(1);
-    
+
     if (errWellness) {
       console.log('[Garmin] Error consultando wellness:', errWellness.message);
       return null;
     }
-    
+
     if (!wellness || wellness.length === 0) {
       // Fallback controlado: último registro disponible (AYER o más reciente)
       const hace7Dias = formatDate(addDays(new Date(), -7));
@@ -1814,21 +1814,21 @@ async function obtenerDatosGarminSupabase() {
         .gte('date', hace7Dias)
         .order('date', { ascending: false })
         .limit(1);
-      
+
       if (errReciente) {
         console.log('[Garmin] Error consultando wellness reciente:', errReciente.message);
         return null;
       }
-      
+
       if (!wellnessReciente || wellnessReciente.length === 0) {
         console.log('[Garmin] No hay datos de wellness en Supabase (ni HOY ni recientes)');
         return null;
       }
-      
+
       wellness = wellnessReciente;
       console.log('[Garmin] ⚠️ No hay datos de HOY. Usando registro más reciente:', wellness[0].date);
     }
-    
+
     const g = wellness[0];
 
     // ─── VALIDAR FECHA ─────────────────────────────────────────
@@ -1926,7 +1926,7 @@ async function obtenerDatosGarminSupabase() {
       date: g.date,
       fuente: 'garmin'
     };
-    
+
     return {
       today,
       garminData: g,
@@ -2009,7 +2009,7 @@ async function obtenerDatosCompletos() {
       if (intervalsToday) {
         console.log('[obtenerDatosCompletos] ✅ Intervals wellness de HOY encontrado');
       } else {
-        console.log('[obtenerDatosCompletos] ⚠️ Intervals wellness NO tiene registro de hoy (último:', 
+        console.log('[obtenerDatosCompletos] ⚠️ Intervals wellness NO tiene registro de hoy (último:',
           (wellness[wellness.length - 1] && (wellness[wellness.length - 1].date || wellness[wellness.length - 1].day)) || 'desconocido', ')');
       }
     }
@@ -2064,7 +2064,7 @@ async function obtenerDatosCompletos() {
 
     // ─── PASOS/HRV: SOLO si hay dato fisiológico válido y fresco ───
     const physioFresh = today
-      ? (calcularFrescura(today.date || today.day || today.start_date)) 
+      ? (calcularFrescura(today.date || today.day || today.start_date))
       : 'NO_DISPONIBLE';
 
     const pasos = today ? (safeNum(today.steps) || safeNum(today.stepsCount) || 0) : 0;
@@ -2096,7 +2096,7 @@ async function obtenerDatosCompletos() {
       sleepSeconds: today ? safeNum(today.sleepSeconds, null) : null
     };
 
-    console.log('[obtenerDatosCompletos] 7. Datos calculados. Fuente fisio:', physioSource, 
+    console.log('[obtenerDatosCompletos] 7. Datos calculados. Fuente fisio:', physioSource,
       '| Frescura:', physioFresh,
       '| CTL:', ctl, 'ATL:', atl, 'TSB:', tsb);
 
@@ -2315,16 +2315,16 @@ async function calcularEstadoSistema(datos) {
     weeklyTss,
     physioFresh
   }, historialParaReadiness);
-  
+
   let readiness = readinessResult.readiness;
   let readinessAlertas = [];
   let readinessTendencias = null;
-  
+
   // Añadir alertas al estado si hay
   if (readinessResult.alertas && readinessResult.alertas.length > 0) {
     readinessAlertas = readinessResult.alertas;
   }
-  
+
   // Guardar tendencias para debugging
   if (readinessResult.tendencias) {
     readinessTendencias = readinessResult.tendencias;
@@ -2345,13 +2345,13 @@ async function calcularEstadoSistema(datos) {
     const temp = datos.weather.temp;
     const hum = datos.weather.humidity || 50;
     humidity = hum;
-    
+
     if (typeof temp === 'number') {
       tempActual = temp;
       heatIndex = calcularHeatIndex(temp, hum);
-      
+
       const aclimatado = estaAclimatado();
-      
+
       if (heatIndex > 40) {
         factorCalor = 0.70;
         haceCalor = true;
@@ -2368,7 +2368,7 @@ async function calcularEstadoSistema(datos) {
         factorCalor = aclimatado ? 0.98 : 0.95;
         haceCalor = true;
       }
-      
+
       if (temp > 28) {
         const dias = getDiasAclimatados() + 1;
         setProperty('dias_calor', Math.min(dias, 30));
@@ -2559,6 +2559,25 @@ function resolverConflictos(estado, restricciones, decision, traza) {
 
   // NIVEL 2: CLIMA (con WBGT)
   if (estado.heatIndex > 40) {
+    // 🏠 Rodillo/indoor (estado.indoor, derivado de la intención 'rodillo'
+    // de motorIntencion con HI>35): NO descanso. Z2 controlado: máx 45 min,
+    // máx IF 0.70, sin series, con ventilación/hidratación. Las reglas
+    // fisiológicas (TSB<-30, readiness<30, ACWR>1.5, forzarDescanso) se
+    // evalúan ANTES que este bloque y mandan por encima.
+    if (estado.indoor) {
+      // forzarDescanso entrante → descanso también en rodillo (regla F).
+      if (resultado.tipo === 'descanso') return resultado;
+      registrarConflictoTraza(traza, 'Heat Index >40°C en rodillo/indoor vs plan', 'CLIMA gana - Z2 controlado');
+      registrarDecisionTraza(traza, 'z2 indoor controlado', 'NIVEL 2 - CLIMA RODILLO');
+      resultado.tipo = 'z2';
+      resultado.durMin = Math.min(resultado.durMin || 45, 45);
+      resultado.intensidad = Math.min(resultado.intensidad || 0.70, 0.70);
+      resultado.reps = 1;
+      resultado.recSec = 0;
+      resultado.motivo = (resultado.motivo || '') + ` | 🏠 Rodillo/indoor (Heat Index ${estado.heatIndex}°C) - Z2 máx 45 min / IF 0.70`;
+      resultado.notaHidratacion = '💧 Ventilador + toalla + 1L/hora con electrolitos (entreno en casa)';
+      return resultado;
+    }
     registrarConflictoTraza(traza, 'Heat Index >40°C vs plan normal', 'CLIMA gana - Descanso obligatorio');
     registrarDecisionTraza(traza, 'descanso', 'NIVEL 2 - CLIMA EXTREMO');
     return {
@@ -2774,14 +2793,14 @@ function guardarFeedbackContextual(feedback, contexto) {
   try {
     const historial = obtenerHistorial();
     if (historial.length === 0) return;
-    
+
     const ultimo = historial[historial.length - 1];
     ultimo.contexto = {
       hora: contexto.hora || 'desconocida',
       comioAntes: contexto.comioAntes || 'no',
       momentoDia: contexto.momentoDia || 'desconocido'
     };
-    
+
     setProperty('historial_entrenos', JSON.stringify(historial));
     console.log('[guardarFeedbackContextual] Contexto guardado');
   } catch(e) {
@@ -2792,7 +2811,7 @@ function guardarFeedbackContextual(feedback, contexto) {
 function analizarAprendizajeContextual() {
   const historial = obtenerHistorial();
   if (historial.length < 10) return null;
-  
+
   let resultados = {
     manana: { total: 0, exito: 0 },
     tarde: { total: 0, exito: 0 },
@@ -2800,18 +2819,18 @@ function analizarAprendizajeContextual() {
     conComida: { total: 0, exito: 0 },
     sinComida: { total: 0, exito: 0 }
   };
-  
+
   historial.forEach(h => {
     const contexto = h.contexto || {};
     const exito = (h.resultado || 0) >= 70;
-    
+
     if (contexto.momentoDia === 'manana') { resultados.manana.total++; if (exito) resultados.manana.exito++; }
     if (contexto.momentoDia === 'tarde') { resultados.tarde.total++; if (exito) resultados.tarde.exito++; }
     if (contexto.momentoDia === 'noche') { resultados.noche.total++; if (exito) resultados.noche.exito++; }
     if (contexto.comioAntes === 'si') { resultados.conComida.total++; if (exito) resultados.conComida.exito++; }
     if (contexto.comioAntes === 'no') { resultados.sinComida.total++; if (exito) resultados.sinComida.exito++; }
   });
-  
+
   return resultados;
 }
 
@@ -2963,7 +2982,7 @@ function decidirEntrenamiento(estado, restricciones) {
   // ─── APLICAR PERIODIZACIÓN ──────────────────────────────────────
   const fase = getFaseActual();
   const tssObjetivo = getTssObjetivoSemanal();
-  
+
   if (restricciones.forzarDescanso) {
     return {
       tipo: 'descanso',
@@ -2975,11 +2994,11 @@ function decidirEntrenamiento(estado, restricciones) {
       motivo: restricciones.motivo.join(' | ') + ` | 📅 Fase: ${fase.toUpperCase()}`
     };
   }
-  
+
   let faseRestringida = false;
   let motivoFase = '';
   let calidadPermitida = puedeHacerCalidad(estado, restricciones);
-  
+
   if (fase === 'base') {
     if (estado.tsb < 15 || estado.readiness < 80) {
       restricciones.forzarZ2 = true;
@@ -2991,7 +3010,7 @@ function decidirEntrenamiento(estado, restricciones) {
       motivoFase = '🏗️ Fase Base - Solo SweetSpot con alta frescura';
     }
   }
-  
+
   if (fase === 'desarrollo') {
     if (estado.tsb < 5 || estado.readiness < 75) {
       restricciones.zonasRestringidas.push('vo2');
@@ -3004,7 +3023,7 @@ function decidirEntrenamiento(estado, restricciones) {
       motivoFase = '📈 Fase Desarrollo - Límite de calidad semanal alcanzado';
     }
   }
-  
+
   if (fase === 'especificidad') {
     if (!calidadPermitida) {
       restricciones.forzarZ2 = true;
@@ -3012,21 +3031,21 @@ function decidirEntrenamiento(estado, restricciones) {
       motivoFase = '🎯 Fase Especificidad - Límite de calidad semanal alcanzado';
     }
   }
-  
+
   if (fase === 'taper') {
     restricciones.volumenMax = 0.7;
     restricciones.forzarZ2 = true;
     faseRestringida = true;
     motivoFase = '🧘 Fase Taper - Reducción de carga y prioridad a frescura';
   }
-  
+
   const tssRestante = tssObjetivo - estado.weeklyTss;
   if (tssRestante < 50 && !restricciones.forzarZ2 && fase !== 'taper') {
     restricciones.volumenMax = Math.min(restricciones.volumenMax || 1.0, 0.8);
     faseRestringida = true;
     motivoFase = '📊 TSS semanal casi alcanzado';
   }
-  
+
   // ─── LÓGICA ORIGINAL ────────────────────────────────────────────
   const tsb = estado.tsb;
   const readiness = estado.readiness;
@@ -3296,7 +3315,7 @@ function generateWorkout(state, restricciones, decision, traza) {
 
 function generarBloques(tipo, reps, durMin, recSec, ftp, intensidad) {
   const bloques = [];
-  
+
   bloques.push({
     tipo: 'warmup',
     nombre: 'Calentamiento',
@@ -3813,7 +3832,7 @@ function generarConsejoUnificado(estado, decision, restricciones) {
     if (estado.sleepQuality === 1) consejos.push('😴 *Has dormido mal.* Reduce intensidad hoy.');
     if (estado.weeklyTss > 750) consejos.push('📊 *Carga semanal alta.* Considera un día extra de descanso.');
     if (CONFIG.AGE_YEARS > 40) consejos.push('🧠 *Master 40+.* Recuerda: la recuperación es clave.');
-    
+
     const horasRec = calcularHorasRecuperacion(estado.weeklyTss || 0, CONFIG.AGE_YEARS, estado.sleepQuality);
     if (horasRec > 12) {
       consejos.push(`⏰ *Recuperación larga:* ${horasRec}h. Tu próximo entreno de calidad será mañana.`);
@@ -3856,6 +3875,23 @@ async function getAthleteState() {
     if (!estado || typeof estado !== 'object') {
       console.log('[getAthleteState] ❌ estado inválido');
       return null;
+    }
+
+    // ─── SEÑAL RODILLO/INDOOR PARA EL CALOR HI>40 ─────────────────────
+    // Cambio autorizado (falso descanso por calor): reutiliza la ÚNICA
+    // fuente de verdad existente, motorIntencion.detectarIntencion(), que ya
+    // recomienda intención 'rodillo' cuando HI > 35 (motorIntencion.js:112-121)
+    // y no hay grupeta ni fatiga crítica. Se calcula sobre el estado BASE con
+    // obtenerHistorial() — los MISMOS inputs que usará getAthleteStateConAjuste()
+    // (función pura → mismo resultado, cero contradicción). resolverConflictos()
+    // y el gate validarSeguridad() leen estado.indoor para no forzar el descanso
+    // por calor cuando el entrenamiento es en rodillo/indoor.
+    try {
+      const intencionBase = motorIntencion.detectarIntencion(estado, obtenerHistorial());
+      estado.indoor = !!(intencionBase && intencionBase.tipo === 'rodillo');
+    } catch (err) {
+      // Degradación segura: sin señal fiable → exterior (descanso por calor vigente).
+      estado.indoor = false;
     }
 
     // Guardar dataQuality en la traza para que /traza pueda mostrarlo
@@ -4060,7 +4096,7 @@ function guardarEntrenoHistorial(entreno, feedback, contexto = {}) {
       .catch(err => {
         console.log('[Historial] Error en guardarEntrenoSupabase:', err);
       });
-    
+
     // ─── GUARDAR EN MEMORIA (siempre) ────────────────────────────
     const historial = obtenerHistorial();
     historial.push({
@@ -4080,10 +4116,10 @@ function guardarEntrenoHistorial(entreno, feedback, contexto = {}) {
 
     setProperty('historial_entrenos', JSON.stringify(historial));
     deleteProperty('stats_agregadas');
-    
+
     console.log('[Historial] Feedback guardado (local)');
     return { guardado: true, peso: 1.0 };
-    
+
   } catch (err) {
     console.log('[Historial] ERROR:', err.toString());
     return { guardado: false, motivo: err.toString() };
@@ -4115,7 +4151,7 @@ async function cmdStart() {
     const semana = getSemanaActual();
     const ftpEstimado = calcularFTPEstimado();
     const proy = calcularProyeccionObjetivo();
-    
+
     const msg = `🌍 *WORLD TOUR COACH v9.5 - DEFINITIVO*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -4396,7 +4432,7 @@ function buildAnalisisEntrenoManu(act, powerCurve) {
   // ─── TRABAJO MECÁNICO (KJ) - CORREGIDO ────────────────────────
   // Buscar primero en kilojulios (valor correcto de Intervals)
   let kj = safeNum(data.icu_kilojoules, 0) || safeNum(data.kilojoules, 0) || safeNum(act.icu_kilojoules, 0) || safeNum(act.kilojoules, 0);
-  
+
   // Si no hay kilojulios, intentar con julios y dividir
   if (kj === 0) {
     const joules = safeNum(data.icu_joules, 0) || safeNum(data.joules, 0) || safeNum(act.icu_joules, 0) || safeNum(act.joules, 0);
@@ -4535,11 +4571,11 @@ async function cmdAnalizar(args) {
 
     let activityId = args && args.length > 0 ? args[0] : null;
     let activity = null;
-    
+
     // ─── SI NO HAY ID, BUSCAR LA ÚLTIMA ACTIVIDAD ──────────────────
     if (!activityId) {
       await sendTelegram('🔍 *BUSCANDO ÚLTIMA ACTIVIDAD...*\n━━━━━━━━━━━━━━━━━━━━━━\n\nObteniendo tu última actividad de Intervals.icu...');
-      
+
       try {
                 const activities = await fetchActivities(10);
         if (!activities || activities.length === 0) {
@@ -4552,7 +4588,7 @@ async function cmdAnalizar(args) {
           await sendTelegram('❌ No se encontraron actividades de ciclismo recientes.\n\nUsa: `/analizar [ID]` con un ID específico.');
           return;
         }
-        
+
         // Buscar actividad con datos (más permisivo)
         let candidata = null;
         for (const act of actividadesCiclismo) {
@@ -4562,19 +4598,19 @@ async function cmdAnalizar(args) {
             break;
           }
         }
-        
+
         if (!candidata) {
           await sendTelegram('❌ No se encontraron actividades con duración > 1 min.\n\nUsa: `/analizar [ID]` con un ID específico.');
           return;
         }
-        
+
         activityId = candidata.id;
         const fecha = new Date(candidata.start_date_local);
         await sendTelegram(`📌 Analizando actividad ID: *${activityId}*\n📅 ${fecha.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`);
-        
+
         // Obtener detalle de la actividad
         activity = await fetchIntervalsActivity(activityId);
-        
+
       } catch (err) {
         await sendTelegram(`❌ Error al obtener la última actividad: ${err.message}\n\nUsa: \`/analizar [ID]\` con un ID específico.`);
         return;
@@ -4588,22 +4624,22 @@ async function cmdAnalizar(args) {
         return;
       }
     }
-    
+
     if (!activity) {
       await sendTelegram(`❌ No se encontró la actividad con ID ${activityId}`);
       return;
     }
-    
+
     // ─── VERIFICAR QUE LA ACTIVIDAD TIENE DATOS ────────────────────
     const tssCheck = safeNum(activity.icu_training_load, 0);
     const npCheck = safeNum(activity.icu_weighted_avg_watts, 0);
     const durationCheck = safeNum(activity.moving_time, 0);
-    
+
     if (tssCheck === 0 && npCheck === 0 && durationCheck < 60) {
       await sendTelegram(`⚠️ *ACTIVIDAD SIN DATOS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nLa actividad con ID ${activityId} no tiene datos de potencia registrados.\n\nUsa: \`/analizar\` sin ID para buscar la última actividad con datos.`);
       return;
     }
-    
+
     // ─── OBTENER CURVA DE POTENCIA ─────────────────────────────────
     let powerCurve = null;
     try {
@@ -4612,10 +4648,10 @@ async function cmdAnalizar(args) {
       // La curva de potencia no es crítica, continuamos
       console.log('[cmdAnalizar] No se pudo obtener power curve:', e.message);
     }
-    
+
     // ─── CONSTRUIR ANÁLISIS COMPLETO ──────────────────────────────
     const analysisMsg = buildAnalisisEntrenoManu(activity, powerCurve);
-    
+
     // ─── OBTENER ACTIVIDADES PARA COMPARATIVA ─────────────────────
     let comparativa = null;
     try {
@@ -4627,7 +4663,7 @@ async function cmdAnalizar(args) {
     } catch (e) {
       console.log('[cmdAnalizar] No se pudo obtener comparativa:', e.message);
     }
-    
+
     // ─── AÑADIR COMPARATIVA AL MENSAJE ────────────────────────────
     let msgFinal = analysisMsg;
     if (comparativa && comparativa.ultimas >= 2) {
@@ -4637,7 +4673,7 @@ async function cmdAnalizar(args) {
       msgFinal += `• IF medio: *${comparativa.avgIf}*\n`;
       msgFinal += `• Duración media: *${comparativa.avgDur} min*\n`;
       msgFinal += `• Tendencia: ${comparativa.tendencia}\n`;
-      
+
       // Consejo basado en tendencia
       if (comparativa.tendencia.includes('⬆️') && comparativa.avgTss > 550) {
         msgFinal += '\n⚠️ *Carga en aumento.* Asegura recuperación adecuada.';
@@ -4645,9 +4681,9 @@ async function cmdAnalizar(args) {
         msgFinal += '\n📈 *Carga baja.* Puedes aumentar intensidad gradualmente.';
       }
     }
-    
+
     await sendTelegramLong(msgFinal);
-    
+
   } catch (err) {
     console.log('[cmdAnalizar] ERROR:', err);
     await sendTelegram(`❌ Error al analizar la actividad: ${err.message}`);
@@ -4773,22 +4809,22 @@ async function cmdProgreso() {
     // del historial combinado en memoria; se carga aquí SOLO como su entrada,
     // NO como fuente de la lista de actividades mostrada abajo.
     await cargarHistorialCompleto();
-    
+
     let msg = '📊 *PROGRESO - EVOLUCIÓN*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     const ftpActual = CONFIG.FTP;
     const ftpEstimado = calcularFTPEstimado();
     const diff = ftpEstimado - ftpActual;
-    
+
     msg += `*🚴 FTP ESTIMADO*\n`;
     msg += `• FTP base: ${ftpActual}W\n`;
     msg += `• FTP estimado actual: *${ftpEstimado}W*\n`;
     msg += `• Variación: ${diff > 0 ? '+' : ''}${diff}W\n\n`;
-    
+
     const proy = calcularProyeccionObjetivo();
     msg += `*🎯 PROYECCIÓN*\n`;
     msg += `• ${proy.mensaje}\n\n`;
-    
+
     // Array ASC garantizado → los últimos son los MÁS RECIENTES
     const ultimos = actividades.slice(-10);
     msg += `*📈 ÚLTIMOS 10 ENTRENOS*\n`;
@@ -4800,7 +4836,7 @@ async function cmdProgreso() {
       const ifTxt = a.if > 0 ? ` | IF:${Math.round(a.if * 100)}%` : '';
       msg += `• ${emoji} ${fechaStr} | ACTIVIDAD | TSS:${a.tss}${ifTxt} | ${a.durMin}min\n`;
     });
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdProgreso] ERROR:', err.toString());
@@ -4819,18 +4855,18 @@ async function cmdPrediccion() {
       await sendTelegram('Sin datos disponibles.');
       return;
     }
-    
+
     const ftpEstimado = state.ftpEstimado || CONFIG.FTP;
     const proy = state.proyeccion || calcularProyeccionObjetivo();
-    
+
     let msg = '🔮 *PREDICCIÓN DE RENDIMIENTO*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `*📊 FTP ACTUAL*\n`;
     msg += `• FTP de entrada: ${CONFIG.FTP}W\n`;
     msg += `• FTP estimado actual: *${ftpEstimado}W*\n\n`;
-    
+
     msg += `*🎯 OBJETIVO: ${CONFIG.FTP_HISTORICO.valor}W*\n`;
     msg += `• ${proy.mensaje}\n\n`;
-    
+
     const pcts = [0.85, 0.95, 1.05, 1.15];
     const nombres = ['SweetSpot', 'FTP', 'VO2', 'Anaerobic'];
     msg += `*⚡ RENDIMIENTO ESTIMADO*\n`;
@@ -4838,9 +4874,9 @@ async function cmdPrediccion() {
       const w = Math.round(ftpEstimado * pct);
       msg += `• ${nombres[idx]}: ${w}W (${(pct*100).toFixed(0)}% FTP)\n`;
     });
-    
+
     msg += '\n💡 *Para mejorar:* Mantén consistencia y prioriza recuperación.';
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdPrediccion] ERROR:', err.toString());
@@ -4873,13 +4909,13 @@ async function cmdFatiga() {
     msg += `• ACWR: ${state.estado.acwr.toFixed(2)} ${state.estado.acwr > 1.3 ? '⚠️ ALTO' : '✅ OK'}\n`;
     msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
     msg += `• Calor: ${state.haceCalor ? `🔥 ${state.heatIndex}°C` : '✅ Normal'}\n\n`;
-    
+
     if (state.horasRecuperacion) {
       msg += `*⏰ RECUPERACIÓN ESTIMADA*\n`;
       msg += `• ${state.horasRecuperacion}h hasta próximo entreno de calidad\n`;
       msg += `• Próximo entreno: ${state.proximoEntreno}\n\n`;
     }
-    
+
     msg += '*💡 RECOMENDACIÓN*\n';
     if (state.tsb < -20 || state.readiness < 40) {
       msg += '🔴 *DESCANSO TOTAL OBLIGATORIO*\n• Haz solo movilidad suave\n• Prioriza dormir 8+ horas\n';
@@ -4908,21 +4944,21 @@ async function cmdRecuperacion() {
       await sendTelegram('Sin datos disponibles.');
       return;
     }
-    
+
     const horas = state.horasRecuperacion || 8;
     const proximo = state.proximoEntreno || 'Mañana';
-    
+
     let msg = '⏳ *RECUPERACIÓN PREDICTIVA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `*📊 FACTORES CONSIDERADOS*\n`;
     msg += `• Edad: ${CONFIG.AGE_YEARS} años\n`;
     msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)}\n`;
     msg += `• Calidad de sueño: ${state.estado.sleepQuality === 1 ? 'Mala' : state.estado.sleepQuality === 2 ? 'Regular' : 'Buena'}\n`;
     msg += `• Estado actual: ${state.tsb > 0 ? 'Fresco' : state.tsb > -10 ? 'Equilibrado' : 'Fatigado'}\n\n`;
-    
+
     msg += `*⏰ TIEMPO ESTIMADO*\n`;
     msg += `• ${horas}h de recuperación necesarias\n`;
     msg += `• Próximo entreno de calidad: ${proximo}\n\n`;
-    
+
     msg += `*💡 CONSEJOS DE RECUPERACIÓN*\n`;
     if (horas > 12) {
       msg += '• 🔴 Prioriza descanso absoluto\n';
@@ -4936,7 +4972,7 @@ async function cmdRecuperacion() {
       msg += '• 🟢 Puedes entrenar con normalidad\n';
       msg += '• 🛌 Mantén buena higiene de sueño\n';
     }
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdRecuperacion] ERROR:', err.toString());
@@ -5003,9 +5039,9 @@ async function cmdTendencias() {
       await sendTelegram('📈 *TENDENCIAS*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 10 entrenos para mostrar tendencias.');
       return;
     }
-    
+
     let msg = '📈 *TENDENCIAS - 90 DÍAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     // Datos reales disponibles: tss, np, if, durMin. No usar RPE/readiness (no existen en actividades_guardadas).
     let totalTSS = 0, totalDur = 0, totalIF = 0;
     historial.slice(-20).forEach(h => {
@@ -5014,23 +5050,23 @@ async function cmdTendencias() {
       totalIF += h.if || 0;
     });
     const n = Math.min(historial.length, 20);
-    
+
     msg += `*📊 MEDIAS (últimos ${n} actividades)*\n`;
     msg += `• TSS medio: ${Math.round(totalTSS/n)}\n`;
     msg += `• Duración media: ${Math.round(totalDur/n)} min\n`;
     msg += `• IF medio: ${(totalIF/n).toFixed(2)}\n\n`;
-    
+
     // Array ASC → los últimos N son los MÁS RECIENTES. Comparar 10 recientes vs 10 anteriores.
     const recientes = historial.slice(-10);
     const antiguos = historial.slice(-20, -10);
     const tssRec = recientes.reduce((sum, h) => sum + (h.tss || 0), 0) / recientes.length;
     const tssAnt = antiguos.length > 0 ? antiguos.reduce((sum, h) => sum + (h.tss || 0), 0) / antiguos.length : 0;
-    
+
     msg += `*📈 TENDENCIA DE CARGA*\n`;
     if (tssRec > tssAnt * 1.2) msg += '• ⬆️ Carga AUMENTANDO - Vigila fatiga\n';
     else if (tssRec < tssAnt * 0.8) msg += '• ⬇️ Carga DISMINUYENDO - Posible descanso\n';
     else msg += '• ➡️ Carga ESTABLE - Buen ritmo\n';
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdTendencias] ERROR:', err.toString());
@@ -5052,7 +5088,7 @@ async function cmdSemana() {
     const tssObj = getTssObjetivoSemanal();
     const calidad = contarSesionesCalidadSemana();
     const maxCalidad = getMaxSesionesCalidad();
-    
+
     let msg = '📊 *RESUMEN SEMANAL*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `*📅 FASE:* ${getNombreFase()} (Semana ${semana}/${getSemanasFase()})\n`;
     msg += `*📈 CARGA*\n`;
@@ -5060,21 +5096,21 @@ async function cmdSemana() {
     msg += `• Sesiones: ${e.weeklySessions}\n`;
     msg += `• Media TSS/sesión: ${e.weeklySessions > 0 ? Math.round(e.weeklyTss / e.weeklySessions) : 0}\n`;
     msg += `• Calidad: ${calidad}/${maxCalidad} sesiones\n\n`;
-    
+
     msg += `*💪 ESTADO ACTUAL*\n`;
     msg += `• CTL: ${e.ctl.toFixed(1)}\n`;
     msg += `• ATL: ${e.atl.toFixed(1)}\n`;
     msg += `• TSB: ${e.tsb.toFixed(1)}\n\n`;
-    
+
     msg += `*📊 ACWR:* ${e.acwr.toFixed(2)}\n`;
     if (e.acwr > 1.3) msg += '⚠️ ACWR alto - Reduce carga esta semana\n';
     else if (e.acwr < 0.8) msg += '📈 ACWR bajo - Puedes aumentar carga\n';
     else msg += '✅ ACWR en rango óptimo\n';
-    
+
     if (state.horasRecuperacion) {
       msg += `\n*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h hasta próximo entreno de calidad.`;
     }
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdSemana] ERROR:', err.toString());
@@ -5089,7 +5125,7 @@ async function cmdSemana() {
 async function cmdSemanaPasada() {
   try {
     await sendTelegram('🔍 *BUSCANDO DATOS DE LA SEMANA PASADA...*\n━━━━━━━━━━━━━━━━━━━━━━\n\nConsultando actividades de lunes a domingo...');
-    
+
     // Calcular fechas de la semana pasada (lunes a domingo)
     const hoy = new Date();
     const diaSemana = hoy.getDay();
@@ -5097,10 +5133,10 @@ async function cmdSemanaPasada() {
     const lunesEstaSemana = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - diasDesdeLunes);
     const lunesSemanaPasada = new Date(lunesEstaSemana.getTime() - 7 * 86400000);
     const domingoSemanaPasada = new Date(lunesSemanaPasada.getTime() + 6 * 86400000);
-    
+
     const lunesStr = formatDate(lunesSemanaPasada);
     const domingoStr = formatDate(domingoSemanaPasada);
-    
+
     // ─── CAMBIO 4 / D7: FUENTE ÚNICA + filtrado correcto de fechas ───
     // La capa única devuelve ASC. Traemos ~13 días (margen para cubrir la semana
     // pasada con timezone) y filtramos en JS reduciendo el timestamp a YYYY-MM-DD:
@@ -5129,7 +5165,7 @@ async function cmdSemanaPasada() {
     } catch (e) {
       console.log('[cmdSemanaPasada] Error en obtenerActividadesReales:', e.message);
     }
-    
+
     // Si no hay en Supabase, buscar en memoria/historial
     if (actividades.length === 0) {
       const historial = obtenerHistorial();
@@ -5150,7 +5186,7 @@ async function cmdSemanaPasada() {
         }
       });
     }
-    
+
     // Si aún no hay datos, buscar en Intervals.icu
     if (actividades.length === 0) {
       try {
@@ -5177,13 +5213,13 @@ async function cmdSemanaPasada() {
         console.log('[cmdSemanaPasada] Error en Intervals:', e);
       }
     }
-    
+
     // Construir mensaje
     let msg = '📊 *RESUMEN SEMANA PASADA*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `📅 *Periodo:* ${lunesSemanaPasada.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}\n`;
     msg += `        hasta ${domingoSemanaPasada.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}\n\n`;
-    
+
     if (actividades.length === 0) {
       msg += '😴 *Sin actividades registradas*\n\n';
       msg += 'No se encontraron entrenos en esta semana.\n';
@@ -5193,10 +5229,10 @@ async function cmdSemanaPasada() {
       // Estadísticas generales
       const tssTotal = actividades.reduce((sum, act) => sum + (safeNum(act.tss, 0)), 0);
       const kjTotal = actividades.reduce((sum, act) => sum + (safeNum(act.kj, 0)), 0);
-      const npPromedio = actividades.length > 0 
+      const npPromedio = actividades.length > 0
         ? Math.round(actividades.reduce((sum, act) => sum + (safeNum(act.np, 0)), 0) / actividades.length)
         : 0;
-      
+
       msg += `*📈 RESUMEN*\n`;
       msg += `• Sesiones: *${actividades.length}*\n`;
       msg += `• TSS total: *${Math.round(tssTotal)}*\n`;
@@ -5205,24 +5241,24 @@ async function cmdSemanaPasada() {
         msg += `• NP promedio: *${npPromedio}W*\n`;
       }
       msg += '\n';
-      
+
       // Detalle de cada actividad
       msg += '*📋 DETALLE DE ACTIVIDADES*\n';
       msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
-      
+
       actividades.forEach((act, idx) => {
         const fecha = new Date(act.Fecha || act.fecha);
-        const fechaStr = fecha.toLocaleDateString('es-ES', { 
-          weekday: 'short', 
-          day: 'numeric', 
-          month: 'short' 
+        const fechaStr = fecha.toLocaleDateString('es-ES', {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short'
         });
-        
+
         const tss = safeNum(act.tss, 0);
         const np = safeNum(act.np, 0);
         const kj = safeNum(act.kj, 0);
         const ifVal = safeNum(act.if_value, 0);
-        
+
         // Determinar tipo de entreno
         let tipo = 'Z2';
         if (np > 0 && CONFIG.FTP > 0) {
@@ -5233,10 +5269,10 @@ async function cmdSemanaPasada() {
           else if (ifCalc > 0.75) tipo = 'Tempo';
           else if (ifCalc > 0.55) tipo = 'Base';
         }
-        
+
         // Emoji según TSS
         const emoji = tss > 150 ? '🔥' : tss > 100 ? '⚡' : tss > 50 ? '✅' : '🟢';
-        
+
         msg += `${idx + 1}. ${emoji} *${fechaStr}*\n`;
         msg += `   ${tipo}`;
         if (tss > 0) msg += ` | TSS: ${tss}`;
@@ -5244,12 +5280,12 @@ async function cmdSemanaPasada() {
         if (kj > 0) msg += ` | ${Math.round(kj)} kJ`;
         msg += '\n';
       });
-      
+
       msg += '\n';
-      
+
       // Análisis de la semana
       msg += '*💡 ANÁLISIS*\n';
-      
+
       if (actividades.length >= 5) {
         msg += '• 🟢 Excelente volumen de entrenamiento\n';
         msg += '• Semana de alta carga - Asegura recuperación\n';
@@ -5260,12 +5296,12 @@ async function cmdSemanaPasada() {
         msg += '• 📈 Semana de carga baja\n';
         msg += '• Puedes aumentar gradualmente\n';
       }
-      
+
       // Promedio TSS por sesión
       if (actividades.length > 0) {
         const tssPromedio = Math.round(tssTotal / actividades.length);
         msg += `• TSS promedio/sesión: ${tssPromedio}\n`;
-        
+
         if (tssPromedio > 100) {
           msg += '• Carga por sesión: Alta\n';
         } else if (tssPromedio > 60) {
@@ -5274,7 +5310,7 @@ async function cmdSemanaPasada() {
           msg += '• Carga por sesión: Baja\n';
         }
       }
-      
+
       // Comparación con objetivo
       const tssObjetivo = getTssObjetivoSemanal();
       const diferencia = Math.round(tssTotal) - tssObjetivo;
@@ -5286,11 +5322,11 @@ async function cmdSemanaPasada() {
         msg += `\n• 🎯 Objetivo semanal alcanzado\n`;
       }
     }
-    
+
     msg += '\n📱 *Comandos:* /semana | /semanapasada | /historial';
-    
+
     await sendTelegramLong(msg);
-    
+
   } catch (err) {
     console.log('[cmdSemanaPasada] ERROR:', err);
     await sendTelegram(`❌ Error al obtener semana pasada: ${err.message}`);
@@ -5318,11 +5354,11 @@ async function cmdHistorial() {
 
     // La fuente única devuelve ASC → se invierte para pintar DESC (más reciente primero)
     const data = [...res.actividades].reverse();
-    
+
     let msg = '📊 *HISTORIAL DE ACTIVIDADES*\n';
     msg += '━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `📋 *Total en BD:* ${data.length} mostradas\n\n`;
-    
+
     data.forEach((act, idx) => {
       const fecha = act.fecha ? new Date(act.fecha).toLocaleDateString('es-ES') : 'Sin fecha';
       const tss = (act.tss != null && act.tss !== undefined) ? act.tss : 'N/A';
@@ -5333,7 +5369,7 @@ async function cmdHistorial() {
         ifVal = (act.if * 100).toFixed(0) + '%';
       }
       const id = act.id || 'Sin ID';
-      
+
       const tssNum = typeof tss === 'number' ? tss : 0;
       const emoji = tssNum > 150 ? '🔥' : tssNum > 80 ? '✅' : '🟢';
       // Mostrar el tipo real de actividad (Ride, VirtualRide, Walk, Run, ...)
@@ -5341,11 +5377,11 @@ async function cmdHistorial() {
       msg += `${idx + 1}. ${emoji} *${fecha}* | TSS: ${tss} | NP: ${np}W | IF: ${ifVal}${tipoTxt ? ` | Tipo: ${tipoTxt}` : ''}\n`;
       msg += `   ID: \`${id}\`\n`;
     });
-    
+
     msg += '\n📱 *Usa /analizar [ID] para ver detalles de una actividad.*';
-    
+
     await sendTelegramLong(msg);
-    
+
   } catch (err) {
     console.log('[cmdHistorial] ERROR:', err);
     await sendTelegram(`❌ Error: ${err.message}`);
@@ -5373,7 +5409,7 @@ async function cmdObjetivo() {
     msg += `• FTP estimado: *${ftpEstimado}W*\n`;
     msg += `• Mejor histórico: *${ftpHistorico.valor}W* (${ftpHistorico.fecha})\n`;
     msg += `• Diferencia: *${diffFTP}W* a recuperar\n\n`;
-    
+
     msg += `*📈 PROYECCIÓN*\n`;
     msg += `• ${proy.mensaje}\n\n`;
 
@@ -5443,7 +5479,7 @@ async function cmdAprender() {
     if (!state) { await sendTelegram('Sin datos.'); return; }
     const stats = state.aprendizaje.stats;
     let msg = '🧠 *WORLD TOUR COACH - DASHBOARD DE APRENDIZAJE*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     if (!stats.suficiente) {
       msg += '📊 *No tengo suficientes datos aún.*\n\n';
       msg += '💡 Sigue entrenando y dando feedback con /analizar.\n';
@@ -5451,9 +5487,9 @@ async function cmdAprender() {
       await sendTelegramLong(msg);
       return;
     }
-    
+
     msg += `📊 *Entrenamientos analizados:* ${stats.total}\n\n`;
-    
+
     // ─── SECCIÓN 1: TASA DE ÉXITO POR TIPO ────────────────────────
     msg += '*📈 TASA DE ÉXITO POR TIPO DE ENTRENO*\n';
     const tipos = Object.keys(stats.porTipo || {});
@@ -5468,7 +5504,7 @@ async function cmdAprender() {
       const dMejor = stats.porTipo[mejor];
       msg += `\n*🏆 MEJOR ENTRENO PARA TI*\n• ${mejor.toUpperCase()} con ${dMejor.tasa}% éxito\n`;
     }
-    
+
     // ─── SECCIÓN 2: APRENDIZAJE CONTEXTUAL ────────────────────────
     const contexto = analizarAprendizajeContextual();
     if (contexto) {
@@ -5486,19 +5522,36 @@ async function cmdAprender() {
         msg += `• Con comida previa: ${tasa}% éxito\n`;
       }
     }
-    
+
     // ─── SECCIÓN 3: ANÁLISIS DE DESVIACIONES ──────────────────────
     const analisisDesviaciones = await analizarCumplimientoPlan();
-    if (analisisDesviaciones.tieneDesviaciones) {
+    if (analisisDesviaciones.estado === 'desviacion') {
+      const desviacionesReales = analisisDesviaciones.desviaciones.filter(d => d.estado !== 'sin_plan');
       msg += '\n*⚠️ DESVIACIONES RECIENTES*\n';
       msg += `• Cumplimiento global: ${analisisDesviaciones.porcentajeCumplimiento}%\n`;
-      msg += `• Desviaciones detectadas: ${analisisDesviaciones.desviaciones.length}\n`;
+      msg += `• Desviaciones detectadas: ${desviacionesReales.length}\n`;
       msg += `• ${analisisDesviaciones.recomendacion}\n`;
-    } else {
+    } else if (analisisDesviaciones.estado === 'ok') {
+      // Único caso que afirma cumplimiento perfecto (100%).
       msg += '\n*🎯 CUMPLIMIENTO*\n';
       msg += '• Excelente! Estás cumpliendo al 100% con el plan.\n';
+    } else if (analisisDesviaciones.estado === 'parcial') {
+      msg += '\n*📋 CUMPLIMIENTO PARCIAL*\n';
+      msg += '• Hay actividades recientes, pero no todas tienen un plan congelado para poder evaluarlas.\n';
+      msg += `• ${analisisDesviaciones.conPlan} de ${analisisDesviaciones.totalActividades} actividades recientes tienen plan congelado. Cumplimiento evaluable: ${analisisDesviaciones.porcentajeCumplimiento}%.\n`;
+      msg += `• ${analisisDesviaciones.sinPlan} fechas quedaron sin plan congelado (no cuentan como incumplimiento).\n`;
+    } else if (analisisDesviaciones.estado === 'sin_plan') {
+      msg += '\n*📋 CUMPLIMIENTO*\n';
+      msg += '• No hay plan congelado para estas fechas — no se puede evaluar cumplimiento.\n';
+    } else if (analisisDesviaciones.estado === 'sin_actividades') {
+      msg += '\n*📋 CUMPLIMIENTO*\n';
+      msg += '• No hay actividades recientes en este periodo.\n';
+    } else {
+      // analisisDesviaciones.estado === 'error'
+      msg += '\n*⚠️ CUMPLIMIENTO*\n';
+      msg += '• No se pudo consultar el plan congelado (Supabase). Cumplimiento no evaluado.\n';
     }
-    
+
     // ─── SECCIÓN 4: PATRONES TEMPORALES ───────────────────────────
     const patrones = detectarPatronesTemporales();
     if (patrones. patronesDetectados) {
@@ -5513,7 +5566,7 @@ async function cmdAprender() {
         msg += `• Con comida previa: ${patrones.conComidaExito}% éxito\n`;
       }
     }
-    
+
     // ─── SECCIÓN 5: RECOMENDACIONES INTELIGENTES ──────────────────
     const recomendaciones = generarRecomendacionesInteligentes(stats, contexto, patrones);
     if (recomendaciones.length > 0) {
@@ -5522,7 +5575,7 @@ async function cmdAprender() {
         msg += `• ${rec}\n`;
       });
     }
-    
+
     msg += '\n📱 *Comandos:* /hoy | /plan | /aprendervalidar | /sync';
     await sendTelegramLong(msg);
   } catch (err) {
@@ -5538,75 +5591,75 @@ function detectarPatronesTemporales() {
     if (historial.length < 5) {
       return { patronesDetectados: false };
     }
-    
+
     const patrones = {
       patronesDetectados: false,
       diaSemana: [],
       horaPreferida: null,
       conComidaExito: 0
     };
-    
+
     // Analizar por día de la semana
     const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
     const desviacionesPorDia = {};
     diasSemana.forEach(dia => desviacionesPorDia[dia] = 0);
-    
+
     // Analizar por hora
     const horasExito = {};
     const horasTotal = {};
-    
+
     // Analizar éxito con/sin comida
     let conComidaExito = 0;
     let conComidaTotal = 0;
-    
+
     historial.forEach(h => {
       const fecha = new Date(h.fecha);
       const dia = diasSemana[fecha.getDay()];
       const hora = fecha.getHours();
       const contexto = h.contexto || {};
       const exito = (h.resultado || 0) >= 70;
-      
+
       // Contar desviaciones por día (entrenos con resultado bajo)
       if (h.resultado < 60) {
         desviacionesPorDia[dia] = (desviacionesPorDia[dia] || 0) + 1;
       }
-      
+
       // Contar éxitos por hora
       if (exito) {
         horasExito[hora] = (horasExito[hora] || 0) + 1;
       }
       horasTotal[hora] = (horasTotal[hora] || 0) + 1;
-      
+
       // Analizar comida previa
       if (contexto.comioAntes === 'si') {
         conComidaTotal++;
         if (exito) conComidaExito++;
       }
     });
-    
+
     // Detectar días con más desviaciones
-    const diasOrdenados = Object.keys(desviacionesPorDia).sort((a, b) => 
+    const diasOrdenados = Object.keys(desviacionesPorDia).sort((a, b) =>
       (desviacionesPorDia[b] || 0) - (desviacionesPorDia[a] || 0)
     );
     patrones.diaSemana = diasOrdenados.slice(0, 2);
-    
+
     // Detectar hora preferida
     const mejorHora = Object.keys(horasExito).sort((a, b) => {
       const tasaA = horasExito[a] / (horasTotal[a] || 1);
       const tasaB = horasExito[b] / (horasTotal[b] || 1);
       return tasaB - tasaA;
     })[0];
-    
+
     if (mejorHora && horasTotal[mejorHora] >= 3) {
       const tasa = Math.round((horasExito[mejorHora] / horasTotal[mejorHora]) * 100);
       patrones.horaPreferida = `${mejorHora}:00 (${tasa}% éxito)`;
     }
-    
+
     // Calcular éxito con comida
     if (conComidaTotal >= 3) {
       patrones.conComidaExito = Math.round((conComidaExito / conComidaTotal) * 100);
     }
-    
+
     patrones.patronesDetectados = true;
     return patrones;
   } catch (err) {
@@ -5618,14 +5671,14 @@ function detectarPatronesTemporales() {
 // ─── GENERAR RECOMENDACIONES INTELIGENTES ──────────────────────
 function generarRecomendacionesInteligentes(stats, contexto, patrones) {
   const recomendaciones = [];
-  
+
   try {
     // Recomendación basada en éxito por tipo
     if (stats.porTipo) {
       const tipos = Object.keys(stats.porTipo);
       const buenos = tipos.filter(t => stats.porTipo[t].tasa >= 80 && stats.porTipo[t].total >= 3);
       const malos = tipos.filter(t => stats.porTipo[t].tasa < 50 && stats.porTipo[t].total >= 3);
-      
+
       if (buenos.length > 0) {
         recomendaciones.push(`✅ Prioriza: ${buenos.join(', ').toUpperCase()}`);
       }
@@ -5633,7 +5686,7 @@ function generarRecomendacionesInteligentes(stats, contexto, patrones) {
         recomendaciones.push(`⚠️ Evita: ${malos.join(', ').toUpperCase()}`);
       }
     }
-    
+
     // Recomendación basada en contexto
     if (contexto) {
       if (contexto.manana.total >= 3) {
@@ -5643,7 +5696,7 @@ function generarRecomendacionesInteligentes(stats, contexto, patrones) {
           recomendaciones.push('🌅 Entrena por la mañana (mayor éxito)');
         }
       }
-      
+
       if (contexto.conComida.total >= 3) {
         const tasaConComida = Math.round((contexto.conComida.exito / contexto.conComida.total) * 100);
         const tasaSinComida = contexto.sinComida.total > 0 ? Math.round((contexto.sinComida.exito / contexto.sinComida.total) * 100) : 0;
@@ -5652,20 +5705,20 @@ function generarRecomendacionesInteligentes(stats, contexto, patrones) {
         }
       }
     }
-    
+
     // Recomendación basada en patrones temporales
     if (patrones.patronesDetectados && patrones.diaSemana.length > 0) {
       recomendaciones.push(`📅 Considera cambiar entrenamientos intensos de ${patrones.diaSemana[0]}`);
     }
-    
+
     if (recomendaciones.length === 0) {
       recomendaciones.push('📊 Sigue entrenando para generar más recomendaciones');
     }
-    
+
   } catch (err) {
     console.log('[generarRecomendacionesInteligentes] ERROR:', err);
   }
-  
+
   return recomendaciones.slice(0, 5);
 }
 
@@ -5812,7 +5865,7 @@ async function cmdGarmin() {
   w.bloques.forEach(b => {
     const wAvg = Math.round((b.vatios.low + b.vatios.high) / 2);
     const duration = b.duracionMin * 60;
-    
+
     let stepType = 'warmup';
     if (b.tipo === 'main') {
       stepType = 'steady_state';
@@ -5821,7 +5874,7 @@ async function cmdGarmin() {
     } else if (b.tipo === 'cooldown') {
       stepType = 'cooldown';
     }
-    
+
     steps.push({
       step_type: stepType,
       duration: duration,
@@ -5838,13 +5891,13 @@ async function cmdGarmin() {
       start_date_local: hoy + 'T08:00:00',
       description: descripcion
     };
-    
+
     console.log('[cmdGarmin] Enviando payload a Intervals.icu...');
     const response = await postIntervals('/events', payload);
-    
+
     const msg = `*🚀 ¡ENTRENO ENVIADO A INTERVALS.ICU!*\n━━━━━━━━━━━━━━━━━━━━━━\n• *Título:* ${payload.name}\n• *Fecha:* ${hoy}\n• *Métricas:* IF ${w.ifEsperado} | TSS ${w.tssEsperado}\n• *Cadencia:* ${w.cadenciaRecomendada || '80-90 rpm'}\n\n_Subido correctamente a Intervals.icu. Desde allí se sincronizará con Garmin._`;
     await sendTelegram(msg);
-    
+
   } catch (err) {
     console.log('[cmdGarmin] Error:', err);
     await sendTelegram(`❌ Error al subir a Intervals: ${err.message}`);
@@ -5907,12 +5960,12 @@ async function cmdDensidad() {
       await sendTelegram('📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━\n\nNecesito al menos 3 entrenos para calcular densidad.');
       return;
     }
-    
+
     // Array ASC → los últimos 10 son los MÁS RECIENTES (antes con array DESC cogía las antiguas)
     const ultimos = historial.slice(-10);
     let tssTotal = 0;
     let horasTotal = 0;
-    
+
     ultimos.forEach(h => {
       tssTotal += h.tss || 0;
       // Duración real en minutos (formato canónico)
@@ -5923,21 +5976,21 @@ async function cmdDensidad() {
       }
       horasTotal += durMin / 60;
     });
-    
+
     // Si aún no hay horas, usar estimación basada en TSS (65 TSS/hora aprox)
     if (horasTotal <= 0 && tssTotal > 0) {
       horasTotal = tssTotal / 65;
     }
-    
+
     const densidad = horasTotal > 0 ? tssTotal / horasTotal : 0;
     const tssPorSemana = ultimos.length > 0 ? (tssTotal / ultimos.length) * 7 : 0;
-    
+
     let msg = '📊 *DENSIDAD DE CARGA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += `*📈 DATOS (últimos ${ultimos.length} entrenos)*\n`;
     msg += `• TSS total: ${Math.round(tssTotal)}\n`;
     msg += `• Horas totales: ${horasTotal.toFixed(1)}h\n`;
     msg += `• Densidad: *${densidad.toFixed(1)} TSS/hora*\n\n`;
-    
+
     msg += `*📊 INTERPRETACIÓN*\n`;
     if (densidad < 50) {
       msg += '• 🟢 Densidad baja - Entrenos de recuperación o base\n';
@@ -5948,10 +6001,10 @@ async function cmdDensidad() {
     } else {
       msg += '• 🔴 Densidad muy alta - Riesgo de sobreentrenamiento\n';
     }
-    
+
     msg += `\n*📅 PROYECCIÓN SEMANAL*\n`;
     msg += `• TSS estimado semanal: ${Math.round(tssPorSemana)}\n`;
-    
+
     const fase = getFaseActual();
     const tssObj = getTssObjetivoSemanal();
     if (tssPorSemana > tssObj * 1.2) {
@@ -5961,7 +6014,7 @@ async function cmdDensidad() {
     } else {
       msg += '• ✅ Carga semanal óptima\n';
     }
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdDensidad] ERROR:', err.toString());
@@ -6075,7 +6128,7 @@ async function cmdClima() {
       recomendacion = '✅ *TEMPERATURA IDEAL* - Sin ajustes';
       hidratacion = '💧 500ml/hora';
     }
-    
+
     if (aclimatado && heatIndex > 28) {
       recomendacion += '\n✅ *Beneficio:* Estás aclimatado al calor, tu cuerpo responde mejor.';
     }
@@ -6102,7 +6155,7 @@ async function cmdNutricion() {
     const kj = workout?.kjEsperados || 0;
 
     let msg = '*🥗 NUTRICIÓN AVANZADA + RECETAS*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     // ─── SECCIÓN 1: MÉTRICAS DE DESGASTE ─────────────────────────
     if (workout && workout.tipo !== 'descanso') {
       msg += '*📊 MÉTRICAS DE DESGASTE*\n';
@@ -6183,7 +6236,7 @@ async function cmdNutricion() {
       // RECETA 2: Comida principal (1-2h después)
       msg += '*🍽️ COMIDA PRINCIPAL (1-2h después)*\n';
       msg += `Objetivo: ${n.chCena}g CH + 40g Proteína + verduras\n\n`;
-      
+
       if (kj > 1200) {
         // Entreno muy intenso
         msg += '*Alto gasto (>1200 kJ) - Recuperación máxima:*\n';
@@ -6288,17 +6341,17 @@ async function cmdFuerza() {
     if (state.haceCalor && state.heatIndex > 30) {
       msg += '\n🌡️ *Con calor, alarga descansos y hidrata entre series.*\n';
     }
-    
+
     if (f.movilidadBase && f.movilidadBase.length > 0) {
       msg += '\n*🧘 MOVILIDAD DIARIA OBLIGATORIA*\n';
       f.movilidadBase.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
     }
-    
+
     if (f.prevencion && f.prevencion.length > 0) {
       msg += '\n*🛡️ PREVENCIÓN DE LESIONES*\n';
       f.prevencion.forEach((ej, idx) => { msg += `${idx+1}. ${ej}\n`; });
     }
-    
+
     msg += '\n📱 *Comandos:* /hoy | /plan | /estado | /movilidad';
     await sendTelegramLong(msg);
   } catch (err) {
@@ -6316,10 +6369,10 @@ async function cmdMovilidad() {
     const state = await getAthleteStateConAjuste();
     if (!state) { await sendTelegram('Sin datos.'); return; }
     const f = state.fuerza;
-    
+
     let msg = '🧘 *RUTINA DE MOVILIDAD DIARIA*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
     msg += '*📋 EJERCICIOS OBLIGATORIOS (15 min)*\n\n';
-    
+
     if (f.movilidadBase && f.movilidadBase.length > 0) {
       f.movilidadBase.forEach((ej, idx) => {
         msg += `${idx+1}. ${ej}\n`;
@@ -6331,12 +6384,12 @@ async function cmdMovilidad() {
       msg += '4. 🔄 Rotaciones cervicales y dorsales\n';
       msg += '5. 🧘 Foam rolling: 5 min (isquios, glúteos, dorsales)\n';
     }
-    
+
     msg += '\n*💡 RECOMENDACIONES*\n';
     msg += '• Haz esto TODOS los días, incluso en días de descanso\n';
     msg += '• Ideal: por la mañana al despertar o antes de entrenar\n';
     msg += '• Si sientes dolor agudo, para y consulta a un profesional\n';
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdMovilidad] ERROR:', err.toString());
@@ -6354,18 +6407,18 @@ async function cmdPlan() {
     if (!state) { await sendTelegram('Sin datos.'); return; }
     const workout = state.workout;
     let msg = '*🧠 PLAN DEL DÍA (v9.5)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
-    
+
     msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
     msg += `• TSS objetivo semanal: ${getTssObjetivoSemanal()} | Actual: ${Math.round(state.estado.weeklyTss)}\n`;
     msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
-    
+
     msg += '*📊 ESTADO*\n';
     msg += `• TSB: ${state.tsb.toFixed(1)} | Readiness: ${state.readiness}/100\n`;
     msg += `• Sueño: ${state.estado.sleepQuality === 1 ? '⚠️ Malo' : state.estado.sleepQuality === 2 ? '🟡 Regular' : '🟢 Bueno'}\n`;
     msg += `• TSS semanal: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
     if (state.haceCalor) msg += `• 🌡️ ${state.tempActual}°C (HI: ${state.heatIndex}°C)\n`;
     msg += '\n';
-    
+
     if (state.horasRecuperacion) {
       msg += `*⏰ RECUPERACIÓN:* ${state.horasRecuperacion}h | Próximo entreno: ${state.proximoEntreno}\n\n`;
     }
@@ -6461,7 +6514,7 @@ async function cmdEstado() {
     msg += `• TSS: ${Math.round(state.estado.weeklyTss)} / ${state.restricciones.tssMaxSemanal}\n`;
     msg += `• Sesiones: ${state.estado.weeklySessions}\n`;
     msg += `• ACWR: ${state.estado.acwr.toFixed(2)}${state.estado.acwr > 1.3 ? ' ⚠️ ALTO' : ' ✅ OK'}\n\n`;
-    
+
     msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()}/${getSemanasFase()})\n`;
     msg += `• Calidad semanal: ${contarSesionesCalidadSemana()}/${getMaxSesionesCalidad()}\n\n`;
 
@@ -6470,12 +6523,12 @@ async function cmdEstado() {
       msg += `• ${state.tempActual}°C (Heat Index ${state.heatIndex}°C)\n`;
       msg += `• Aclimatación: ${estaAclimatado() ? '✅ Aclimatado' : `${getDiasAclimatados()}/${CONFIG.CLIMA.diasAclimatacion} días`}\n\n`;
     }
-    
+
     msg += `*🚴 FTP ESTIMADO:* ${state.ftpEstimado || CONFIG.FTP}W\n`;
     if (state.proyeccion && !state.proyeccion.alcanzado) {
       msg += `• ${state.proyeccion.mensaje}\n`;
     }
-    
+
     await sendTelegramLong(msg);
   } catch (err) {
     console.log('[cmdEstado] ERROR:', err.toString());
@@ -6515,7 +6568,7 @@ async function cmdResumen() {
     msg += `*😴 SUEÑO:* ${state.estado.sleepQuality === 1 ? 'Malo' : state.estado.sleepQuality === 2 ? 'Regular' : 'Bueno'}\n`;
     msg += `*🌡️ CLIMA:* ${state.tempActual}°C (HI: ${state.heatIndex}°C)${state.haceCalor ? ' 🔥' : ''}\n`;
     msg += `*📅 FASE:* ${getNombreFase()} (Semana ${getSemanaActual()})\n`;
-    
+
     if (state.workout && state.workout.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
     else if (state.decision.tipo === 'descanso') msg += '*🧘 PLAN:* DESCANSO TOTAL\n';
     else {
@@ -6525,20 +6578,20 @@ async function cmdResumen() {
       else if (w.durMin) msg += ` ${w.durMin}min`;
       msg += ` | Cadencia: ${w.cadenciaRecomendada || '80-90 rpm'}\n`;
     }
-    
+
     if (state.ftpEstimado) {
       msg += `*🚴 FTP estimado:* ${state.ftpEstimado}W\n`;
     }
-    
+
     if (state.aprendizaje && state.aprendizaje.probabilidad && state.decision.tipo !== 'descanso') {
       const p = state.aprendizaje.probabilidad;
       msg += `\n📊 *Probabilidad de éxito:* ${p.nivel} (${p.probabilidad}%)\n`;
     }
-    
+
     if (state.horasRecuperacion) {
       msg += `\n⏰ *Recuperación:* ${state.horasRecuperacion}h`;
     }
-    
+
     msg += '\n\n📱 *Comandos:* /hoy | /plan | /estado | /clima';
     await sendTelegramLong(msg);
   } catch (err) {
@@ -6566,9 +6619,9 @@ async function cmdAjuste() {
 async function cmdSync() {
   try {
     await sendTelegram('🔄 *SINCRONIZANDO CON SUPABASE...*\n━━━━━━━━━━━━━━━━━━━━━━\n\nCargando actividades de Intervals.icu...');
-    
+
     const resultado = await sincronizarActividadesSupabase(50);
-    
+
     if (resultado.sincronizado) {
       // Obtener actividades guardadas de Supabase (tabla correcta: actividades_guardadas)
       const { count, error: errAct } = await supabase
@@ -6576,58 +6629,76 @@ async function cmdSync() {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', CONFIG.CHAT_ID || 'default');
       const totalActividades = errAct ? 0 : (count || 0);
-      
+
       // ─── CEREBRO: ANALIZAR CUMPLIMIENTO DEL PLAN ─────────────────
       const analisis = await analizarCumplimientoPlan();
-      
+
       let msg = `✅ *SINCRONIZACIÓN COMPLETADA*\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
       msg += `📊 *Actividades sincronizadas:* ${resultado.total}\n`;
       msg += `📋 *Total en BD:* ${totalActividades} actividades\n\n`;
-      
-      if (analisis.tieneDesviaciones) {
-        msg += `🧠 *ANÁLISIS INTELIGENTE*\n`;
-        msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-        msg += `📊 *Cumplimiento del plan:* ${analisis.porcentajeCumplimiento}%\n\n`;
-        
-        if (analisis.desviaciones.length > 0) {
-          msg += `⚠️ *DESVIACIONES DETECTADAS:*\n`;
-          analisis.desviaciones.forEach((desv, idx) => {
-            msg += `\n${idx + 1}. ${desv.fecha}\n`;
-            msg += `   • Plan: ${desv.planTipo.toUpperCase()}\n`;
-            msg += `   • Realizado: ${desv.realTipo.toUpperCase()}\n`;
-            msg += `   • Diferencia TSS: ${desv.diferenciaTSS > 0 ? '+' : ''}${desv.diferenciaTSS}\n`;
-            msg += `   • ${desv.motivo}\n`;
-          });
-          msg += '\n';
-        }
-        
-        msg += `💡 *RECOMENDACIÓN DEL SISTEMA:*\n`;
-        msg += `${analisis.recomendacion}\n\n`;
-        
-        // Preguntar al usuario sobre las desviaciones
-        if (analisis.desviaciones.length > 0) {
-          msg += `❓ *AYÚDAME A ENTENDER:*\n`;
-          msg += `Responde con el número de la desviación y el motivo:\n`;
-          msg += `1. Salida en grupeta\n`;
-          msg += `2. Cambié el entreno por otro\n`;
-          msg += `3. No pude cumplir el plan\n`;
-          msg += `4. Otro motivo\n\n`;
-          msg += `Ejemplo: "1 grupeta" o "2 preferí hacer FTP"`;
-        }
-      } else {
+
+      // El mensaje de PERFECTO/100% SOLO puede aparecer con estado 'ok'.
+      if (analisis.estado === 'ok') {
         msg += `🎯 *¡PERFECTO!*\n`;
         msg += `Estás cumpliendo al 100% con el plan.\n`;
         msg += `Sigue así, vas por muy buen camino. 🚴\n\n`;
+      } else if (analisis.estado === 'desviacion') {
+        msg += `🧠 *ANÁLISIS INTELIGENTE*\n`;
+        msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        msg += `📊 *Cumplimiento del plan:* ${analisis.porcentajeCumplimiento}%\n\n`;
+
+        // Solo las desviaciones reales se listan/preguntan: los días sin plan
+        // van registrados como {fecha, estado:'sin_plan'} y NO son incumplimiento.
+        const desviacionesReales = analisis.desviaciones.filter(d => d.estado !== 'sin_plan');
+
+        msg += `⚠️ *DESVIACIONES DETECTADAS:*\n`;
+        desviacionesReales.forEach((desv, idx) => {
+          msg += `\n${idx + 1}. ${desv.fecha}\n`;
+          msg += `   • Plan: ${desv.planTipo.toUpperCase()}\n`;
+          msg += `   • Realizado: ${desv.realTipo.toUpperCase()}\n`;
+          msg += `   • Diferencia TSS: ${desv.diferenciaTSS > 0 ? '+' : ''}${desv.diferenciaTSS}\n`;
+          msg += `   • ${desv.motivo}\n`;
+        });
+        msg += '\n';
+
+        msg += `💡 *RECOMENDACIÓN DEL SISTEMA:*\n`;
+        msg += `${analisis.recomendacion}\n\n`;
+
+        // Preguntar al usuario sobre las desviaciones
+        msg += `❓ *AYÚDAME A ENTENDER:*\n`;
+        msg += `Responde con el número de la desviación y el motivo:\n`;
+        msg += `1. Salida en grupeta\n`;
+        msg += `2. Cambié el entreno por otro\n`;
+        msg += `3. No pude cumplir el plan\n`;
+        msg += `4. Otro motivo\n\n`;
+        msg += `Ejemplo: "1 grupeta" o "2 preferí hacer FTP"`;
+      } else if (analisis.estado === 'parcial') {
+        msg += `🧠 *ANÁLISIS INTELIGENTE*\n`;
+        msg += `━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        msg += `📊 *Cumplimiento del plan:* ${analisis.conPlan} de ${analisis.totalActividades} actividades tenían plan congelado y ${analisis.ok} se cumplieron.\n`;
+        msg += `📅 *Sin plan congelado:* ${analisis.sinPlan} fechas quedaron sin plan (no cuentan como incumplimiento).\n\n`;
+      } else if (analisis.estado === 'sin_plan') {
+        msg += `No hay plan congelado para estas fechas — no se puede evaluar cumplimiento.\n`;
+      } else if (analisis.estado === 'sin_actividades') {
+        msg += `No hay actividades recientes en este periodo — no hay cumplimiento que evaluar.\n`;
+      } else {
+        // analisis.estado === 'error'
+        msg += `⚠️ No se pudo consultar el plan congelado (Supabase). Cumplimiento no evaluado.\n`;
       }
-      
+
       msg += `\n🔄 Los datos ahora son persistentes.\n\n`;
       msg += `💡 *Usa /historial para ver tus entrenos guardados.*`;
-      
+
       await sendTelegramLong(msg);
-      
-      // Guardar estado de análisis para procesar respuesta
-      if (analisis.tieneDesviaciones && analisis.desviaciones.length > 0) {
-        setProperty('analisis_desviaciones', JSON.stringify(analisis));
+
+      // Guardar estado de análisis para procesar respuesta (solo desviaciones
+      // reales: la numeración del chat debe coincidir con la lista mostrada).
+      if (analisis.estado === 'desviacion') {
+        const analisisConversacion = {
+          ...analisis,
+          desviaciones: analisis.desviaciones.filter(d => d.estado !== 'sin_plan')
+        };
+        setProperty('analisis_desviaciones', JSON.stringify(analisisConversacion));
         setUserProperty('esperando_respuesta_desviacion', 'true');
       }
     } else {
@@ -6644,30 +6715,30 @@ function predecirDesviaciones(decision) {
   try {
     const historial = obtenerHistorial();
     if (historial.length < 5) return null;
-    
+
     const tipo = decision.tipo || 'z2';
     const diaSemana = new Date().getDay();
     const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
     const hoy = diasSemana[diaSemana];
-    
+
     // Buscar entrenamientos similares en el historial
     const similares = historial.filter(h => {
       return h.entreno?.tipo === tipo && (h.resultado || 0) < 60;
     });
-    
+
     if (similares.length < 2) return null;
-    
+
     // Calcular probabilidad de desviación
     const totalTipo = historial.filter(h => h.entreno?.tipo === tipo).length;
     const probabilidad = totalTipo > 0 ? Math.round((similares.length / totalTipo) * 100) : 0;
-    
+
     if (probabilidad < 40) return null;
-    
+
     // Analizar motivos de desviaciones anteriores
     const aprendizajes = getProperty('aprendizaje_desviaciones');
     const listaAprendizajes = aprendizajes ? JSON.parse(aprendizajes) : [];
     const desviacionesTipo = listaAprendizajes.filter(a => a.desviacion?.planTipo === tipo);
-    
+
     let motivoComun = '';
     if (desviacionesTipo.length > 0) {
       const categorias = {};
@@ -6675,17 +6746,17 @@ function predecirDesviaciones(decision) {
         const cat = d.categoria || 'otro';
         categorias[cat] = (categorias[cat] || 0) + 1;
       });
-      const categoriaMasComun = Object.keys(categorias).sort((a, b) => 
+      const categoriaMasComun = Object.keys(categorias).sort((a, b) =>
         (categorias[b] || 0) - (categorias[a] || 0)
       )[0];
-      
+
       if (categoriaMasComun === 'grupeta') {
         motivoComun = 'Históricamente cambias este entreno por salidas en grupo';
       } else if (categoriaMasComun === 'imposibilidad') {
         motivoComun = 'No has podido cumplir este tipo de entreno anteriormente';
       }
     }
-    
+
     return {
       probabilidad: probabilidad,
       motivo: motivoComun,
@@ -6703,25 +6774,25 @@ async function verificarDesviacionTiempoReal(activityId) {
     // Obtener la actividad
     const activity = await fetchIntervalsActivity(activityId);
     if (!activity) return null;
-    
+
     const tss = safeNum(activity.icu_training_load, 0);
     const np = safeNum(activity.icu_weighted_avg_watts, 0);
     const fecha = new Date(activity.start_date_local || activity.start_date);
     const fechaStr = formatDate(fecha);
-    
+
     // Buscar el plan de ese día
     const historial = obtenerHistorial();
     const planDia = historial.find(h => {
       const fechaHist = new Date(h.fecha);
       return formatDate(fechaHist) === fechaStr && h.entreno?.tipo;
     });
-    
+
     if (!planDia || !planDia.entreno) return null;
-    
+
     // Comparar con el plan
     const planTipo = planDia.entreno.tipo;
     const planTSS = planDia.entreno.tss || 0;
-    
+
     let realTipo = 'z2';
     if (np > 0 && CONFIG.FTP > 0) {
       const ifCalc = np / CONFIG.FTP;
@@ -6730,11 +6801,11 @@ async function verificarDesviacionTiempoReal(activityId) {
       else if (ifCalc > 0.87) realTipo = 'sweetspot';
       else if (ifCalc > 0.75) realTipo = 'tempo';
     }
-    
+
     const diferenciaTSS = tss - planTSS;
     const desviacionTSS = Math.abs(diferenciaTSS) > (planTSS * 0.3);
     const desviacionTipo = planTipo !== realTipo && planTipo !== 'z2';
-    
+
     if (desviacionTSS || desviacionTipo) {
       let motivo = '';
       if (desviacionTSS && diferenciaTSS > 0) {
@@ -6742,11 +6813,11 @@ async function verificarDesviacionTiempoReal(activityId) {
       } else if (desviacionTSS && diferenciaTSS < 0) {
         motivo = `Hiciste ${Math.round(Math.abs(diferenciaTSS))} TSS menos de lo planeado`;
       }
-      
+
       if (desviacionTipo) {
         motivo += ` | Tipo diferente: esperado ${planTipo.toUpperCase()}, realizado ${realTipo.toUpperCase()}`;
       }
-      
+
       return {
         fecha: fecha.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }),
         planTipo: planTipo,
@@ -6755,7 +6826,7 @@ async function verificarDesviacionTiempoReal(activityId) {
         motivo: motivo
       };
     }
-    
+
     return null;
   } catch (err) {
     console.log('[verificarDesviacionTiempoReal] ERROR:', err);
@@ -6768,32 +6839,32 @@ function analizarPatronesTemporales() {
   try {
     const historial = obtenerHistorial();
     if (historial.length < 10) return null;
-    
+
     const patrones = {
       diaSemana: {},
       hora: {},
       contexto: {}
     };
-    
+
     const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-    
+
     historial.forEach(h => {
       const fecha = new Date(h.fecha);
       const dia = diasSemana[fecha.getDay()];
       const hora = fecha.getHours();
       const contexto = h.contexto || {};
       const exito = (h.resultado || 0) >= 70;
-      
+
       // Patrones por día
       if (!patrones.diaSemana[dia]) patrones.diaSemana[dia] = { total: 0, exitos: 0 };
       patrones.diaSemana[dia].total++;
       if (exito) patrones.diaSemana[dia].exitos++;
-      
+
       // Patrones por hora
       if (!patrones.hora[hora]) patrones.hora[hora] = { total: 0, exitos: 0 };
       patrones.hora[hora].total++;
       if (exito) patrones.hora[hora].exitos++;
-      
+
       // Patrones contextuales
       if (contexto.momentoDia) {
         if (!patrones.contexto[contexto.momentoDia]) patrones.contexto[contexto.momentoDia] = { total: 0, exitos: 0 };
@@ -6801,23 +6872,23 @@ function analizarPatronesTemporales() {
         if (exito) patrones.contexto[contexto.momentoDia].exitos++;
       }
     });
-    
+
     // Calcular tasas de éxito
     Object.keys(patrones.diaSemana).forEach(dia => {
       const p = patrones.diaSemana[dia];
       p.tasa = p.total > 0 ? Math.round((p.exitos / p.total) * 100) : 0;
     });
-    
+
     Object.keys(patrones.hora).forEach(hora => {
       const p = patrones.hora[hora];
       p.tasa = p.total > 0 ? Math.round((p.exitos / p.total) * 100) : 0;
     });
-    
+
     Object.keys(patrones.contexto).forEach(ctx => {
       const p = patrones.contexto[ctx];
       p.tasa = p.total > 0 ? Math.round((p.exitos / p.total) * 100) : 0;
     });
-    
+
     return patrones;
   } catch (err) {
     console.log('[analizarPatronesTemporales] ERROR:', err);
@@ -6836,25 +6907,25 @@ function ajustarPlanAutomaticamente(decision) {
     const historial = obtenerHistorial();
     const aprendizajes = getProperty('aprendizaje_desviaciones');
     const listaAprendizajes = aprendizajes ? JSON.parse(aprendizajes) : [];
-    
+
     if (historial.length < 5 || listaAprendizajes.length < 2) {
       return arguments[0]; // No hay suficientes datos para ajustar
     }
-    
+
     const tipo = decision.tipo || 'z2';
     const diaSemana = new Date().getDay();
     const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
     const hoy = diasSemana[diaSemana];
-    
+
     // Analizar desviaciones del mismo tipo
     const desviacionesTipo = listaAprendizajes.filter(a => a.desviacion?.planTipo === tipo);
-    
+
     if (desviacionesTipo.length < 2) return arguments[0];
-    
+
     // Calcular tasa de desviación
     const totalTipo = historial.filter(h => h.entreno?.tipo === tipo).length;
     const tasaDesviacion = totalTipo > 0 ? (desviacionesTipo.length / totalTipo) * 100 : 0;
-    
+
     // Si la tasa de desviación es >60%, ajustar el plan
     if (tasaDesviacion > 60) {
       const categoriaMasComun = {};
@@ -6862,11 +6933,11 @@ function ajustarPlanAutomaticamente(decision) {
         const cat = d.categoria || 'otro';
         categoriaMasComun[cat] = (categoriaMasComun[cat] || 0) + 1;
       });
-      
-      const categoriaPrincipal = Object.keys(categoriaMasComun).sort((a, b) => 
+
+      const categoriaPrincipal = Object.keys(categoriaMasComun).sort((a, b) =>
         (categoriaMasComun[b] || 0) - (categoriaMasComun[a] || 0)
       )[0];
-      
+
       // Ajustar según la categoría principal
       if (categoriaPrincipal === 'grupeta') {
         // Si siempre hay grupeta, sugerir Z2 suave
@@ -6894,7 +6965,7 @@ function ajustarPlanAutomaticamente(decision) {
         }
       }
     }
-    
+
     // Analizar patrones por día de la semana
     const desviacionesPorDia = {};
     listaAprendizajes.forEach(a => {
@@ -6904,11 +6975,11 @@ function ajustarPlanAutomaticamente(decision) {
         desviacionesPorDia[dia] = (desviacionesPorDia[dia] || 0) + 1;
       }
     });
-    
+
     // Si hoy es un día con muchas desviaciones, sugerir Z2
     const desviacionesHoy = desviacionesPorDia[hoy] || 0;
     const totalDias = Object.values(desviacionesPorDia).reduce((a, b) => a + b, 0);
-    
+
     if (totalDias > 0 && desviacionesHoy > 0) {
       const porcentajeHoy = (desviacionesHoy / totalDias) * 100;
       if (porcentajeHoy > 30 && decision.tipo !== 'z2' && decision.tipo !== 'descanso') {
@@ -6920,7 +6991,7 @@ function ajustarPlanAutomaticamente(decision) {
         decision.razonAjuste = 'patron_dia';
       }
     }
-    
+
     return decision;
   } catch (err) {
     console.log('[ajustarPlanAutomaticamente] ERROR:', err);
@@ -6933,37 +7004,37 @@ async function getAthleteStateConAjuste() {
   try {
     const state = await getAthleteState();
     if (!state || !state.decision) return state;
-    
+
     // ─── MOTOR DE INTENCIÓN: DETECTAR INTENCIÓN DEL DÍA ─────────
     const historial = obtenerHistorial();
     const intencion = motorIntencion.detectarIntencion(state.estado, historial);
-    
+
     // Adaptar la decisión según la intención
     let decisionAjustada = motorIntencion.adaptarDecisionParaIntencion(
-      state.decision, 
-      intencion, 
+      state.decision,
+      intencion,
       state.estado
     );
-    
+
     // ─── AJUSTE AUTOMÁTICO (CEREBRO) ────────────────────────────
     // Solo aplicar si la intención no ha cambiado la decisión
     if (!decisionAjustada.esIntencion) {
       decisionAjustada = ajustarPlanAutomaticamente(decisionAjustada);
     }
-    
+
     // ─── 🔒 GATE FINAL DE SEGURIDAD (F2 - SPEC_V10_F1 §10.2) ─────
     // Ninguna capa posterior (intención, ajustes automáticos o una
     // futura sustitución) puede elevar la decisión por encima de una
     // restricción de seguridad activa. Se ejecuta SIEMPRE, después
     // de todas las capas de mutación y ANTES de generateWorkout().
     decisionAjustada = validarSeguridad(decisionAjustada, state.estado, state.restricciones);
-    
+
     // ─── TRAINING NEED (SPEC_V10_F1 §6 paso 8, capa informativa) ──
     // DESPUÉS del gate y de la decisión final. Solo lectura + diagnóstico;
     // su salida se adjunta a la respuesta y JAMÁS alimenta a decision,
     // workout ni restricciones.
     const trainingNeed = calcularTrainingNeedInformativo(decisionAjustada, state);
-    
+
     // ─── P2B: LAZY-ENSURE DEL PLAN PREVISTO (read-or-freeze) ─────
     // Congela el baseline PRE-INTENCIÓN del día (state.decision tras
     // validarSeguridad + generateWorkout + Training Need) SOLO si aún no
@@ -6976,7 +7047,7 @@ async function getAthleteStateConAjuste() {
       fecha: formatDate(new Date()),
       state
     });
-    
+
     // ─── SUBSTITUTION ENGINE CON PERSISTENCIA (P2, SPEC §6 paso 9) ─
     // El orquestador delega en ejecutarSustitucionP2 (bloque P2 declarado
     // tras esta función): lecturas de persistencia → contexto al motor →
@@ -7003,22 +7074,22 @@ async function getAthleteStateConAjuste() {
       motivo: evaluacionSustitucion.motivo,
       aplicada: evaluacionSustitucion.aplicada
     };
-    
+
     // ─── GENERAR CONSEJO ADAPTATIVO ─────────────────────────────
     const consejoAdaptativo = motorIntencion.generarConsejoAdaptativo(
-      intencion, 
-      state.estado, 
+      intencion,
+      state.estado,
       decisionAjustada
     );
-    
+
     // Si la intención cambió la decisión, regenerar workout
     if (decisionAjustada.esIntencion || decisionAjustada.ajusteAutomatico) {
-      console.log('[getAthleteStateConAjuste] ✅ Decisión adaptada:', 
+      console.log('[getAthleteStateConAjuste] ✅ Decisión adaptada:',
         decisionAjustada.esIntencion ? `intención: ${intencion.tipo}` : `ajuste: ${decisionAjustada.razonAjuste}`);
-      
+
       // Regenerar workout con la decisión ajustada
       const workoutAjustado = generateWorkout(state.estado, state.restricciones, decisionAjustada, state.traza);
-      
+
       return {
         ...state,
         decision: decisionAjustada,
@@ -7046,7 +7117,7 @@ async function getAthleteStateConAjuste() {
         }
       };
     }
-    
+
     // Si no hubo cambios, añadir intención y consejo adaptativo
     return {
       ...state,
@@ -7536,115 +7607,180 @@ function evaluarSustitucionPipeline({ sesionPrevista, candidato, trainingNeed, e
 // ─── CEREBRO: ANALIZAR CUMPLIMIENTO DEL PLAN ────────────────────
 async function analizarCumplimientoPlan() {
   try {
-    // Obtener plan de la semana actual (desde el estado del sistema)
-    const state = await getAthleteState();
-    if (!state) {
-      return { tieneDesviaciones: false, porcentajeCumplimiento: 100 };
-    }
-    
-    // Obtener las 7 actividades más recientes del usuario
+    // Obtener las 7 actividades más recientes del usuario (periodo actual)
     // CAMBIO 4 / D8: FUENTE ÚNICA de actividades (obtenerActividadesReales)
     // en lugar de consulta directa a actividades_guardadas. Reproduce la
     // semántica anterior: mismo filtro de user_id y selección de las 7 más
     // recientes (la fuente única hace ORDER BY Fecha DESC + LIMIT 7 internos
     // con limite: 7, sin ventana temporal dias).
-            const resActs = await obtenerActividadesReales({
+    const resActs = await obtenerActividadesReales({
       limite: 7,
       userId: CONFIG.CHAT_ID || 'default',
       soloCiclismo: true
     });
-    
+
     if (!resActs.ok || !resActs.actividades || resActs.actividades.length === 0) {
-      return { tieneDesviaciones: false, porcentajeCumplimiento: 100 };
+      return {
+        estado: 'sin_actividades',
+        tieneDesviaciones: false,
+        porcentajeCumplimiento: null,
+        desviaciones: [],
+        recomendacion: 'Sin actividades recientes en el periodo — no hay cumplimiento que evaluar.',
+        totalActividades: 0,
+        conPlan: 0,
+        sinPlan: 0,
+        ok: 0,
+        evaluadas: 0,
+        error: false
+      };
     }
     const actividades = resActs.actividades;
-    
-    // Obtener el plan generado para cada día (desde el historial de decisiones)
-    const historial = obtenerHistorial();
+    const totalActividades = actividades.length;
+
+    // Fechas (YYYY-MM-DD) de las actividades del periodo: el plan congelado
+    // (plan_previsto_diario) se consulta con el id canónico del atleta
+    // (CONFIG.ATHLETE_USER_ID), NUNCA CHAT_ID: es la identidad con la que el
+    // scheduler / lazy-ensure congelan el plan.
+    const fechas = actividades.map(act => formatDate(new Date(act.fecha || act.Fecha)));
+    const resPlan = await persistenciaPlan.getPlanesPrevistosFechas(CONFIG.ATHLETE_USER_ID, fechas);
+    if (!resPlan || resPlan.ok !== true) {
+      return {
+        estado: 'error',
+        tieneDesviaciones: false,
+        porcentajeCumplimiento: null,
+        desviaciones: [],
+        recomendacion: 'No se pudo consultar el plan congelado (Supabase). Cumplimiento no evaluado.',
+        totalActividades: totalActividades,
+        conPlan: 0,
+        sinPlan: 0,
+        ok: 0,
+        evaluadas: 0,
+        error: true
+      };
+    }
+    const planesPorFecha = {};
+    (resPlan.planes || []).forEach(p => { if (p && p.fecha) planesPorFecha[p.fecha] = p; });
+
     const desviaciones = [];
-    
-    // Comparar cada actividad con el plan esperado
+    let conPlan = 0;   // actividades con plan congelado (evaluables)
+    let sinPlan = 0;   // actividades/días sin plan congelado (NO son incumplimiento)
+    let cumplidas = 0; // actividades con plan que cumplen
+
+    // Comparar cada actividad realizada con su plan previsto (emparejando por fecha).
+    // Campos del plan usados: fecha, tipo_previsto, tss_previsto.
+    // (decision/workout/training_need NO participan en este cálculo.)
     actividades.forEach(act => {
-      const fechaAct = new Date(act.Fecha || act.fecha);
+      const fechaAct = new Date(act.fecha || act.Fecha);
       const fechaStr = formatDate(fechaAct);
-      
-      // Buscar si hay un plan para esa fecha en el historial
-      const planDia = historial.find(h => {
-        const fechaHist = new Date(h.fecha);
-        return formatDate(fechaHist) === fechaStr && h.entreno?.tipo;
-      });
-      
-      if (planDia && planDia.entreno) {
-        const planTipo = planDia.entreno.tipo;
-        const planTSS = planDia.entreno.tss || 0;
-        const realTSS = safeNum(act.tss, 0);
-        const realNP = safeNum(act.np, 0);
-        
-        // Determinar tipo real basado en NP/FTP
-        let realTipo = 'z2';
-        if (realNP > 0 && CONFIG.FTP > 0) {
-          const ifCalc = realNP / CONFIG.FTP;
-          if (ifCalc > 1.05) realTipo = 'vo2';
-          else if (ifCalc > 0.95) realTipo = 'ftp';
-          else if (ifCalc > 0.87) realTipo = 'sweetspot';
-          else if (ifCalc > 0.75) realTipo = 'tempo';
-          else realTipo = 'z2';
+      const plan = planesPorFecha[fechaStr];
+
+      if (!plan) {
+        sinPlan++;
+        desviaciones.push({ fecha: fechaStr, estado: 'sin_plan' });
+        return;
+      }
+      conPlan++;
+
+      const planTipo = plan.tipo_previsto;
+      const planTSS = safeNum(plan.tss_previsto, 0);
+      const realTSS = safeNum(act.tss, 0);
+      const realNP = safeNum(act.np, 0);
+
+      // Determinar tipo real basado en NP/FTP
+      let realTipo = 'z2';
+      if (realNP > 0 && CONFIG.FTP > 0) {
+        const ifCalc = realNP / CONFIG.FTP;
+        if (ifCalc > 1.05) realTipo = 'vo2';
+        else if (ifCalc > 0.95) realTipo = 'ftp';
+        else if (ifCalc > 0.87) realTipo = 'sweetspot';
+        else if (ifCalc > 0.75) realTipo = 'tempo';
+        else realTipo = 'z2';
+      }
+
+      // Detectar desviación (reglas intactas)
+      const diferenciaTSS = realTSS - planTSS;
+      const desviacionTSS = Math.abs(diferenciaTSS) > (planTSS * 0.3); // ±30% de tolerancia
+      const desviacionTipo = planTipo !== realTipo && planTipo !== 'z2'; // z2 planificado no exige tipo exacto
+
+      if (desviacionTSS || desviacionTipo) {
+        let motivo = '';
+        if (desviacionTSS && diferenciaTSS > 0) {
+          motivo = `Hiciste ${Math.round(diferenciaTSS)} TSS más de lo planeado`;
+        } else if (desviacionTSS && diferenciaTSS < 0) {
+          motivo = `Hiciste ${Math.round(Math.abs(diferenciaTSS))} TSS menos de lo planeado`;
         }
-        
-        // Detectar desviación
-        const diferenciaTSS = realTSS - planTSS;
-        const desviacionTSS = Math.abs(diferenciaTSS) > (planTSS * 0.3); // 30% de tolerancia
-        const desviacionTipo = planTipo !== realTipo && planTipo !== 'z2';
-        
-        if (desviacionTSS || desviacionTipo) {
-          let motivo = '';
-          if (desviacionTSS && diferenciaTSS > 0) {
-            motivo = `Hiciste ${Math.round(diferenciaTSS)} TSS más de lo planeado`;
-          } else if (desviacionTSS && diferenciaTSS < 0) {
-            motivo = `Hiciste ${Math.round(Math.abs(diferenciaTSS))} TSS menos de lo planeado`;
-          }
-          
-          if (desviacionTipo) {
-            motivo += ` | Tipo diferente: esperado ${planTipo.toUpperCase()}, realizado ${realTipo.toUpperCase()}`;
-          }
-          
-          desviaciones.push({
-            fecha: fechaAct.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }),
-            planTipo: planTipo,
-            realTipo: realTipo,
-            planTSS: planTSS,
-            realTSS: realTSS,
-            diferenciaTSS: diferenciaTSS,
-            motivo: motivo
-          });
+
+        if (desviacionTipo) {
+          motivo += ` | Tipo diferente: esperado ${planTipo.toUpperCase()}, realizado ${realTipo.toUpperCase()}`;
         }
+
+        desviaciones.push({
+          fecha: fechaAct.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }),
+          planTipo: planTipo,
+          realTipo: realTipo,
+          planTSS: planTSS,
+          realTSS: realTSS,
+          diferenciaTSS: diferenciaTSS,
+          motivo: motivo
+        });
+      } else {
+        cumplidas++;
       }
     });
-    
-    // Calcular porcentaje de cumplimiento
-    const porcentajeCumplimiento = desviaciones.length === 0 ? 100 : 
-      Math.round(((actividades.length - desviaciones.length) / actividades.length) * 100);
-    
-    // Generar recomendación
+
+    const evaluadas = conPlan; // solo las actividades con plan
+    const desviacionesReales = desviaciones.filter(d => d.estado !== 'sin_plan');
+    // Nunca se divide entre actividades sin plan: solo se usa evaluadas.
+    const porcentajeCumplimiento = evaluadas === 0 ? null : Math.round((cumplidas / evaluadas) * 100);
+
+    // Estado por prioridad (sin_plan/sin_actividades/error ya retornaron antes):
+    // desviacion > parcial > ok.
+    let estado = 'ok';
+    if (evaluadas === 0) estado = 'sin_plan';
+    else if (desviacionesReales.length > 0) estado = 'desviacion';
+    else if (sinPlan > 0) estado = 'parcial';
+
+    // Recomendación (mismos umbrales de siempre, solo con porcentaje evaluable)
     let recomendacion = '';
-    if (porcentajeCumplimiento >= 80) {
+    if (evaluadas === 0) {
+      recomendacion = 'No hay plan congelado para estas fechas — no se puede evaluar cumplimiento.';
+    } else if (porcentajeCumplimiento >= 80) {
       recomendacion = 'Excelente cumplimiento. El plan se adapta bien a tu estilo.';
     } else if (porcentajeCumplimiento >= 60) {
       recomendacion = 'Buen cumplimiento, pero hay margen de mejora. ¿Quieres ajustar el plan?';
     } else {
       recomendacion = 'El plan no se ajusta a tu realidad. Necesitamos revisar la estrategia.';
     }
-    
+
     return {
-      tieneDesviaciones: desviaciones.length > 0,
+      estado: estado,
+      tieneDesviaciones: desviacionesReales.length > 0,
       porcentajeCumplimiento: porcentajeCumplimiento,
       desviaciones: desviaciones,
-      recomendacion: recomendacion
+      recomendacion: recomendacion,
+      totalActividades: totalActividades,
+      conPlan: conPlan,
+      sinPlan: sinPlan,
+      ok: cumplidas,
+      evaluadas: evaluadas,
+      error: false
     };
-    
+
   } catch (err) {
     console.log('[analizarCumplimientoPlan] ERROR:', err);
-    return { tieneDesviaciones: false, porcentajeCumplimiento: 100 };
+    return {
+      estado: 'error',
+      tieneDesviaciones: false,
+      porcentajeCumplimiento: null,
+      desviaciones: [],
+      recomendacion: 'No se pudo consultar el plan congelado (Supabase). Cumplimiento no evaluado.',
+      totalActividades: 0,
+      conPlan: 0,
+      sinPlan: 0,
+      ok: 0,
+      evaluadas: 0,
+      error: true
+    };
   }
 }
 
@@ -7653,22 +7789,22 @@ async function procesarRespuestaDesviacion(texto) {
   try {
     const analisisStr = getProperty('analisis_desviaciones');
     if (!analisisStr) return false;
-    
+
     const analisis = JSON.parse(analisisStr);
     const t = texto.toLowerCase().trim();
-    
+
     // Extraer número y motivo
     const partes = t.split(' ');
     const numDesviacion = parseInt(partes[0]) - 1;
     const motivo = partes.slice(1).join(' ') || 'otro';
-    
+
     if (numDesviacion < 0 || numDesviacion >= analisis.desviaciones.length) {
       await sendTelegram('❌ Número de desviación no válido. Responde con el número (1, 2, 3...) y el motivo.');
       return true;
     }
-    
+
     const desviacion = analisis.desviaciones[numDesviacion];
-    
+
     // Clasificar el motivo
     let categoria = 'otro';
     if (motivo.includes('grupeta') || motivo.includes('grup') || motivo.includes('salida')) {
@@ -7680,17 +7816,17 @@ async function procesarRespuestaDesviacion(texto) {
     } else if (motivo.includes('lesion') || motivo.includes('dolor') || motivo.includes('molestia')) {
       categoria = 'lesion';
     }
-    
+
     // Guardar el aprendizaje
     await guardarAprendizajeDesviacion(desviacion, categoria, motivo);
-    
+
     // Generar respuesta inteligente
     let respuesta = `✅ *ENTENDIDO*\n━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     respuesta += `📝 *Desviación registrada:*\n`;
     respuesta += `• ${desviacion.fecha}\n`;
     respuesta += `• Categoría: ${categoria.toUpperCase()}\n`;
     respuesta += `• Motivo: ${motivo}\n\n`;
-    
+
     // Aprendizaje del sistema
     respuesta += `🧠 *APRENDIZAJE DEL SISTEMA:*\n`;
     if (categoria === 'grupeta') {
@@ -7713,17 +7849,17 @@ async function procesarRespuestaDesviacion(texto) {
       respuesta += `• Categoría: Otro\n`;
       respuesta += `• Aprendizaje: Registrado para análisis futuro\n`;
     }
-    
+
     respuesta += `\n📊 *Estadísticas actualizadas:*\n`;
     respuesta += `• Cumplimiento global: ${analisis.porcentajeCumplimiento}%\n`;
     respuesta += `• Desviaciones registradas: ${analisis.desviaciones.length}\n`;
-    
+
     await sendTelegramLong(respuesta);
-    
+
     // Limpiar estado
     deleteProperty('analisis_desviaciones');
     deleteUserProperty('esperando_respuesta_desviacion');
-    
+
     return true;
   } catch (err) {
     console.log('[procesarRespuestaDesviacion] ERROR:', err);
@@ -7741,24 +7877,24 @@ async function guardarAprendizajeDesviacion(desviacion, categoria, motivo) {
       motivo: motivo,
       user_id: CONFIG.CHAT_ID || 'default'
     };
-    
+
     // Guardar en Supabase
     const { error } = await supabase
       .from('aprendizaje_desviaciones')
       .insert([aprendizaje]);
-    
+
     if (error) {
       console.log('[guardarAprendizajeDesviacion] Error:', error);
     } else {
       console.log('[guardarAprendizajeDesviacion] ✅ Aprendizaje guardado');
     }
-    
+
     // También guardar en memoria
     const aprendizajes = getProperty('aprendizaje_desviaciones');
     const lista = aprendizajes ? JSON.parse(aprendizajes) : [];
     lista.push(aprendizaje);
     setProperty('aprendizaje_desviaciones', JSON.stringify(lista));
-    
+
   } catch (err) {
     console.log('[guardarAprendizajeDesviacion] ERROR:', err);
   }
@@ -7812,7 +7948,7 @@ async function procesarMensajeFeedback(texto, chatId) {
         break;
       case 7:
         estado.comioAntes = t;
-        
+
         const datos = await obtenerDatosCompletos();
         const hoy = datos ? datos.today : {};
         const ctl = safeNum(hoy.ctl, 50);
@@ -8092,10 +8228,10 @@ async function procesarSiguienteMensaje() {
   if (procesandoMensaje || colaMensajes.length === 0) {
     return;
   }
-  
+
   procesandoMensaje = true;
   const { body, res } = colaMensajes.shift();
-  
+
   try {
     await procesarWebhook(body, res);
   } catch (err) {
@@ -8113,36 +8249,36 @@ async function procesarSiguienteMensaje() {
 
 function encolarMensaje(body, res) {
   const updateId = body.update_id;
-  
+
   // Si ya estamos procesando este update, ignorar
   if (updateIdProcesando === updateId) {
     console.log('[Cola] ⚠️ Update duplicado ignorado:', updateId);
     res.status(200).json({ ok: true, message: 'duplicate' });
     return false;
   }
-  
+
   // Agregar a cola
   colaMensajes.push({ body, res });
   console.log('[Cola] 📥 Mensaje encolado. Total en cola:', colaMensajes.length);
-  
+
   // Si no hay nada procesando, iniciar
   if (!procesandoMensaje) {
     procesarSiguienteMensaje();
   }
-  
+
   return true;
 }
 
 app.post('/webhook', async (req, res) => {
   try {
     const body = req.body;
-    
+
     // ─── USAR SISTEMA DE COLA ────────────────────────────────────
     const encolado = encolarMensaje(body, res);
     if (!encolado) {
       return;
     }
-    
+
     // No continuar aquí - el procesamiento se hace en procesarSiguienteMensaje()
     return;
   } catch (err) {
@@ -8215,23 +8351,23 @@ async function procesarWebhook(body, res) {
       case '/ajuste': await cmdAjuste(); break;
       case '/nutricion': await cmdNutricion(); break;
       case '/fuerza': await cmdFuerza(); break;
-      
+
       case '/semana': await cmdSemana(); break;
-      case '/semana-pasada': 
-      case '/semanapasada': 
-        await cmdSemanaPasada(); 
+      case '/semana-pasada':
+      case '/semanapasada':
+        await cmdSemanaPasada();
         break;
-      
+
       case '/consejo': await cmdConsejo(); break;
       case '/resumen': await cmdResumen(); break;
       case '/fatiga': await cmdFatiga(); break;
-      
+
       case '/aprender': await cmdAprender(); break;
-      case '/aprender-validar': 
-      case '/aprendervalidar': 
-        await cmdAprenderValidar(); 
+      case '/aprender-validar':
+      case '/aprendervalidar':
+        await cmdAprenderValidar();
         break;
-      
+
       case '/tendencias': await cmdTendencias(); break;
       case '/recuperacion': await cmdRecuperacion(); break;
       case '/prediccion': await cmdPrediccion(); break;
@@ -8247,11 +8383,11 @@ async function procesarWebhook(body, res) {
       case '/traza': await cmdTraza(); break;
       case '/movilidad': await cmdMovilidad(); break;
       case '/sync': await cmdSync(); break;   // ← NUEVO COMANDO
-      case '/ia': 
+      case '/ia':
         // Procesar IA en segundo plano para no bloquear el webhook
         setImmediate(() => cmdIA(args).catch(err => console.log('[cmdIA bg]', err)));
         break;
-      
+
       default:
         await sendTelegram('Comando no reconocido.\nEscribe /start para ver el menu.');
     }
@@ -8372,11 +8508,11 @@ async function registrarWebhookTelegram() {
   }
 
   // Detectar URL pública del despliegue
-  const publicUrl = process.env.RAILWAY_PUBLIC_DOMAIN 
+  const publicUrl = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : process.env.RENDER_EXTERNAL_URL 
+    : process.env.RENDER_EXTERNAL_URL
       ? process.env.RENDER_EXTERNAL_URL
-      : process.env.PUBLIC_URL 
+      : process.env.PUBLIC_URL
         ? process.env.PUBLIC_URL
         : null;
 
@@ -8404,7 +8540,7 @@ async function registrarWebhookTelegram() {
     }, TIMEOUTS.TELEGRAM);
 
     const data = await response.json();
-    
+
     if (data.ok) {
       console.log(`[Webhook] ✅ Webhook registrado correctamente: ${webhookUrl}`);
       console.log(`[Webhook] 📥 Pending updates: ${data.result?.pending_update_count || 0}`);
@@ -8461,7 +8597,7 @@ app.listen(PORT, () => {
   console.log('🆕 CEREBRO: Dashboard de aprendizaje completo');
   console.log('🆕 CEREBRO: Recomendaciones inteligentes');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  
+
   // ─── REGISTRAR WEBHOOK AUTOMÁTICAMENTE ────────────────────────
   registrarWebhookTelegram();
 });

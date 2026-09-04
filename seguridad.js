@@ -49,8 +49,23 @@ function validarSeguridad(decision, estado, restricciones) {
   }
 
   // ─── NIVEL 2: CLIMA EXTREMO (resolverConflictos 2554) ─────────────
-  if (typeof estado.heatIndex === 'number' && estado.heatIndex > 40) {
+  // HI > 40 SIN rodillo/indoor → descanso obligatorio (regla vigente).
+  if (typeof estado.heatIndex === 'number' && estado.heatIndex > 40 && !estado.indoor) {
     return esDescanso(`Heat Index ${estado.heatIndex}°C - Descanso obligatorio`);
+  }
+  // HI > 40 CON rodillo/indoor (estado.indoor, derivado de la intención
+  // 'rodillo' de motorIntencion) → Z2 controlado: máx 45 min, máx IF 0.70,
+  // sin series. Las reglas fisiológicas (TSB/readiness/forzarDescanso ANTES
+  // y ACWR DESPUÉS) mandan por encima y no cambian.
+  if (typeof estado.heatIndex === 'number' && estado.heatIndex > 40 && estado.indoor) {
+    if (resultado.tipo !== 'z2' || (resultado.durMin || 0) > 45 || (resultado.intensidad || 0) > 0.70) {
+      resultado.tipo = 'z2';
+      resultado.durMin = Math.min(resultado.durMin || 45, 45);
+      resultado.intensidad = Math.min(resultado.intensidad || 0.70, 0.70);
+      resultado.reps = 1;
+      resultado.recSec = 0;
+      reglas.push(`Calor extremo (HI ${estado.heatIndex}°C) en rodillo/indoor - Z2 máx 45 min / IF 0.70`);
+    }
   }
 
   // ─── NIVEL 1: ACWR crítico (resolverConflictos 2541-2551) ────────
