@@ -2,6 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const motorIntencion = require('./motorIntencion');
+const { validarSeguridad } = require('./seguridad');
+const { calcularTrainingNeed } = require('./trainingNeed');
+const substitutionEngine = require('./substitutionEngine');
+const persistenciaPlan = require('./persistenciaPlan'); // P2: única capa plan_previsto_diario / registro_sustituciones (C7/R19)
 require('dotenv').config({ path: 'ENV' });
 
 // ═══════════════════════════════════════════════════════════════
@@ -70,6 +74,9 @@ const CONFIG = {
   // Para que el bot lea lo que Garmin escribe, ATHLETE_USER_ID debe coincidir
   // con ese USER_ID. Por defecto usa CHAT_ID (comportamiento original).
   ATHLETE_USER_ID: process.env.ATHLETE_USER_ID || process.env.USER_ID || '939585578',
+  // Secret para el endpoint de cron externo (P2B): el scheduler envía la
+  // cabecera X-Cron-Secret y debe coincidir EXACTAMENTE. Sin configurar → 401.
+  CRON_SECRET: process.env.CRON_SECRET || null,
   INTERVALS_API_KEY: process.env.INTERVALS_API_KEY,
   ATHLETE_ID: process.env.ATHLETE_ID,
   WEATHER_API_KEY: process.env.WEATHER_API_KEY,
@@ -6821,12 +6828,17 @@ function analizarPatronesTemporales() {
 // ─── AJUSTE AUTOMÁTICO DEL PLAN ─────────────────────────────────
 function ajustarPlanAutomaticamente(decision) {
   try {
+    // No mutar la decisión original: trabajar sobre una copia y devolverla.
+    // Las salidas sin ajuste devuelven el objeto recibido sin tocarlo.
+    const decision = arguments[0] && typeof arguments[0] === 'object'
+      ? JSON.parse(JSON.stringify(arguments[0]))
+      : arguments[0];
     const historial = obtenerHistorial();
     const aprendizajes = getProperty('aprendizaje_desviaciones');
     const listaAprendizajes = aprendizajes ? JSON.parse(aprendizajes) : [];
     
     if (historial.length < 5 || listaAprendizajes.length < 2) {
-      return decision; // No hay suficientes datos para ajustar
+      return arguments[0]; // No hay suficientes datos para ajustar
     }
     
     const tipo = decision.tipo || 'z2';
@@ -6837,7 +6849,7 @@ function ajustarPlanAutomaticamente(decision) {
     // Analizar desviaciones del mismo tipo
     const desviacionesTipo = listaAprendizajes.filter(a => a.desviacion?.planTipo === tipo);
     
-    if (desviacionesTipo.length < 2) return decision;
+    if (desviacionesTipo.length < 2) return arguments[0];
     
     // Calcular tasa de desviación
     const totalTipo = historial.filter(h => h.entreno?.tipo === tipo).length;
@@ -6912,7 +6924,7 @@ function ajustarPlanAutomaticamente(decision) {
     return decision;
   } catch (err) {
     console.log('[ajustarPlanAutomaticamente] ERROR:', err);
-    return decision;
+    return arguments[0];
   }
 }
 
@@ -6938,6 +6950,59 @@ async function getAthleteStateConAjuste() {
     if (!decisionAjustada.esIntencion) {
       decisionAjustada = ajustarPlanAutomaticamente(decisionAjustada);
     }
+    
+    // ─── 🔒 GATE FINAL DE SEGURIDAD (F2 - SPEC_V10_F1 §10.2) ─────
+    // Ninguna capa posterior (intención, ajustes automáticos o una
+    // futura sustitución) puede elevar la decisión por encima de una
+    // restricción de seguridad activa. Se ejecuta SIEMPRE, después
+    // de todas las capas de mutación y ANTES de generateWorkout().
+    decisionAjustada = validarSeguridad(decisionAjustada, state.estado, state.restricciones);
+    
+    // ─── TRAINING NEED (SPEC_V10_F1 §6 paso 8, capa informativa) ──
+    // DESPUÉS del gate y de la decisión final. Solo lectura + diagnóstico;
+    // su salida se adjunta a la respuesta y JAMÁS alimenta a decision,
+    // workout ni restricciones.
+    const trainingNeed = calcularTrainingNeedInformativo(decisionAjustada, state);
+    
+    // ─── P2B: LAZY-ENSURE DEL PLAN PREVISTO (read-or-freeze) ─────
+    // Congela el baseline PRE-INTENCIÓN del día (state.decision tras
+    // validarSeguridad + generateWorkout + Training Need) SOLO si aún no
+    // existe plan congelado (idempotente por PK + ignoreDuplicates). Reutiliza
+    // el state YA calculado: NO re-ejecuta getAthleteState() ni llama a
+    // getAthleteStateConAjuste() (prohibición de recursión P2B). Fallos de
+    // Supabase → { plan:null } y /hoy continúa (P2B-14).
+    const planPrevistoEnsure = await ensurePlanPrevistoDia({
+      userId: CONFIG.ATHLETE_USER_ID,
+      fecha: formatDate(new Date()),
+      state
+    });
+    
+    // ─── SUBSTITUTION ENGINE CON PERSISTENCIA (P2, SPEC §6 paso 9) ─
+    // El orquestador delega en ejecutarSustitucionP2 (bloque P2 declarado
+    // tras esta función): lecturas de persistencia → contexto al motor →
+    // re-gate de seguridad → registro SOLO si la sustitución se aplica.
+    const resultadoSustitucion = await ejecutarSustitucionP2({
+      state,
+      decisionAjustada,
+      trainingNeed,
+      // Identificador canónico del atleta en Supabase (plan_previsto_diario /
+      // registro_sustituciones pertenecen al dominio del atleta, NO al chat de
+      // Telegram): CONFIG.ATHLETE_USER_ID, nunca CHAT_ID ni 'default'.
+      userId: CONFIG.ATHLETE_USER_ID,
+      fecha: formatDate(new Date())
+    });
+    const evaluacionSustitucion = resultadoSustitucion.evaluacionSustitucion;
+    // La decisión SOLO se reasigna si el motor aceptó y la segunda
+    // validarSeguridad() devolvió una decisión (regla 14).
+    if (resultadoSustitucion.decisionFinalUsada) {
+      decisionAjustada = resultadoSustitucion.decisionFinalUsada;
+    }
+    const resumenSustitucion = {
+      evaluada: evaluacionSustitucion.evaluada,
+      estado: evaluacionSustitucion.estado,
+      motivo: evaluacionSustitucion.motivo,
+      aplicada: evaluacionSustitucion.aplicada
+    };
     
     // ─── GENERAR CONSEJO ADAPTATIVO ─────────────────────────────
     const consejoAdaptativo = motorIntencion.generarConsejoAdaptativo(
@@ -6970,6 +7035,9 @@ async function getAthleteStateConAjuste() {
         },
         intencion: intencion,
         consejo: consejoAdaptativo,
+        planPrevisto: planPrevistoEnsure.plan,
+        trainingNeed,
+        sustitucion: resumenSustitucion,
         ajusteAutomatico: {
           aplicado: true,
           razon: decisionAjustada.esIntencion ? `intencion_${intencion.tipo}` : decisionAjustada.razonAjuste,
@@ -6983,11 +7051,485 @@ async function getAthleteStateConAjuste() {
     return {
       ...state,
       intencion: intencion,
-      consejo: consejoAdaptativo
+      consejo: consejoAdaptativo,
+      planPrevisto: planPrevistoEnsure.plan,
+      trainingNeed,
+      sustitucion: resumenSustitucion
     };
   } catch (err) {
     console.log('[getAthleteStateConAjuste] ERROR:', err);
     return await getAthleteState();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🧩 P2 — ORQUESTACIÓN DE SUSTITUCIÓN CON PERSISTENCIA (P1→P2)
+// Integración quirúrgica de persistenciaPlan.js en el pipeline F2.
+// Reglas P2 (Manu, autorización P2):
+//   R19  index.js ORQUESTA; las únicas consultas a plan_previsto_diario
+//        y registro_sustituciones viven en persistenciaPlan.js (C7).
+//   R1-2 Lectura del plan previsto y del contador semanal SOLO aquí,
+//        después del Training Need y ANTES de evaluarSustitucionPipeline.
+//        El plan congelado ES la sesión prevista de referencia (SPEC §3.2):
+//        no se recalcula, no se sobrescribe ni se sustituye por una
+//        decisión fresca.
+//   R10-11 Sin plan congelado → degradación segura: no se evalúa ni se
+//        registra sustitución (no se inventa ni se crea plan; P2-2).
+//   R6-9  Contador semanal real (0-3) desde registro_sustituciones;
+//        null (error Supabase) → 'dependencia_persistencia', nunca 0.
+//   R13-16 Registro SOLO si aplicada === true Y la segunda pasada de
+//        validarSeguridad() no rechazó/redujo la sustitución. No se
+//        registra nada que no vaya a aplicarse realmente.
+//   R21-23 Fallo de lectura o escritura → log + decisión segura intacta;
+//        /hoy nunca se rompe por I/O (C8).
+// ═══════════════════════════════════════════════════════════════
+
+// Sesión prevista para el motor: la referencia PERSISTIDA (plan congelado)
+// cuando existe; si no, la decisión fresca del día (contrato F2 previo, sin
+// inventar ningún plan). Los datos previstos se sirven tal cual: NO se
+// recalcula el plan ni se reemplaza silenciosamente por la decisión fresca.
+function construirSesionPrevista(planPrevisto, state) {
+  if (planPrevisto && typeof planPrevisto === 'object') {
+    const decision = (planPrevisto.decision && typeof planPrevisto.decision === 'object') ? planPrevisto.decision : {};
+    const workout = (planPrevisto.workout && typeof planPrevisto.workout === 'object') ? planPrevisto.workout : {};
+    const tssEsperado = Number.isFinite(planPrevisto.tss_previsto) ? planPrevisto.tss_previsto
+      : (Number.isFinite(workout.tssEsperado) ? workout.tssEsperado
+      : (Number.isFinite(decision.tssEsperado) ? decision.tssEsperado
+      : (Number.isFinite(decision.tss) ? decision.tss : undefined)));
+    return {
+      tipo: (typeof planPrevisto.tipo_previsto === 'string' && planPrevisto.tipo_previsto) ? planPrevisto.tipo_previsto
+        : (typeof decision.tipo === 'string' ? decision.tipo : null),
+      reps: Number.isFinite(decision.reps) ? decision.reps : undefined,
+      durMin: Number.isFinite(planPrevisto.duracion_prevista_min) ? planPrevisto.duracion_prevista_min
+        : (Number.isFinite(decision.durMin) ? decision.durMin : undefined),
+      recSec: Number.isFinite(decision.recSec) ? decision.recSec : undefined,
+      intensidad: Number.isFinite(planPrevisto.intensidad_prevista) ? planPrevisto.intensidad_prevista
+        : (Number.isFinite(decision.intensidad) ? decision.intensidad : undefined),
+      tssEsperado,
+      es_calidad: typeof planPrevisto.es_calidad === 'boolean' ? planPrevisto.es_calidad
+        : (typeof decision.es_calidad === 'boolean' ? decision.es_calidad : null),
+      motivo: (typeof decision.motivo === 'string' && decision.motivo) ? decision.motivo
+        : `Plan previsto (${planPrevisto.estado || 'VIGENTE'})`,
+      desdePlanCongelado: true
+    };
+  }
+  const decisionFresca = (state && state.decision && typeof state.decision === 'object') ? state.decision : {};
+  return {
+    ...decisionFresca,
+    tssEsperado: (state && state.workout && Number.isFinite(state.workout.tssEsperado)) ? state.workout.tssEsperado : undefined
+  };
+}
+
+// Reglas 15-16: la sustitución solo se registra si SOBREVIVE a la segunda
+// validarSeguridad(): el gate no cambió el tipo ni redujo duración/intensidad
+// de la sesión propuesta, y además es un cambio REAL de sesión (B ≠ A).
+function sustitucionSigueAplicable(candidato, sesionPrevista, decisionRevalidada) {
+  if (!candidato || !sesionPrevista || !decisionRevalidada) return false;
+  if (typeof candidato.tipo !== 'string' || typeof decisionRevalidada.tipo !== 'string') return false;
+  if (decisionRevalidada.tipo !== candidato.tipo) return false;              // el gate cambió el tipo (z2/descanso/…)
+  if ((decisionRevalidada.durMin || 0) !== (candidato.durMin || 0)) return false;         // el gate redujo duración
+  if ((decisionRevalidada.intensidad || 0) !== (candidato.intensidad || 0)) return false; // el gate redujo intensidad
+  if (candidato.tipo === sesionPrevista.tipo) return false;                  // no es un cambio real de sesión
+  return true;
+}
+
+// es_calidad booleano estricto (o null si no es determinable): nunca se inventa.
+function computaCalidadBooleana(sesion) {
+  try {
+    const r = substitutionEngine.computaComoCalidad(sesion);
+    return typeof r === 'boolean' ? r : null;
+  } catch (err) {
+    console.log('[P2 persistencia] computaCalidadBooleana:', err && err.message);
+    return null;
+  }
+}
+
+// Construye el registro según el contrato de persistenciaPlan.js
+// (allowlist de columnas de TP7/TP14). Devuelve null si faltan datos
+// obligatorios: en ese caso NO se construye ni se inserta nada.
+function construirRegistroSustitucion({ userId, fecha, planPrevisto, sesionPrevista, decisionFinal }) {
+  if (!userId || !fecha || !planPrevisto || !sesionPrevista || !decisionFinal) return null;
+  const meta = (decisionFinal.sustitucion && typeof decisionFinal.sustitucion === 'object') ? decisionFinal.sustitucion : {};
+  const previstaTipo = (typeof sesionPrevista.tipo === 'string' && sesionPrevista.tipo) ? sesionPrevista.tipo : null;
+  const previstaTss = Number.isFinite(meta.tss_previsto) ? meta.tss_previsto
+    : (Number.isFinite(sesionPrevista.tssEsperado) ? sesionPrevista.tssEsperado : null);
+  const previstaDuracion = Number.isFinite(sesionPrevista.durMin) ? sesionPrevista.durMin : null;
+  const previstaEsCalidad = typeof sesionPrevista.es_calidad === 'boolean' ? sesionPrevista.es_calidad
+    : computaCalidadBooleana(sesionPrevista);
+  const sustitutaTipo = (typeof decisionFinal.tipo === 'string' && decisionFinal.tipo) ? decisionFinal.tipo : null;
+  const sustitutaTss = Number.isFinite(meta.tss_candidato) ? meta.tss_candidato
+    : (Number.isFinite(decisionFinal.tssEsperado) ? decisionFinal.tssEsperado
+    : (Number.isFinite(decisionFinal.tss) ? decisionFinal.tss : null));
+  const sustitutaDuracion = Number.isFinite(decisionFinal.durMin) ? decisionFinal.durMin : null;
+  const sustitutaEsCalidad = typeof meta.computa_como_calidad === 'boolean' ? meta.computa_como_calidad
+    : computaCalidadBooleana(decisionFinal);
+  // Contrato persistenciaPlan: campos obligatorios (TP14).
+  if (!previstaTipo || !Number.isFinite(previstaTss) || typeof previstaEsCalidad !== 'boolean') return null;
+  if (!sustitutaTipo || typeof sustitutaEsCalidad !== 'boolean') return null;
+  return {
+    user_id: userId,
+    fecha,
+    prevista_tipo: previstaTipo,
+    prevista_tss: previstaTss,
+    prevista_duracion_min: previstaDuracion,
+    prevista_es_calidad: previstaEsCalidad,
+    sustituta_tipo: sustitutaTipo,
+    sustituta_tss: sustitutaTss,
+    sustituta_duracion_min: sustitutaDuracion,
+    sustituta_es_calidad: sustitutaEsCalidad,
+    categoria: (typeof decisionFinal.tipoIntencion === 'string' && decisionFinal.tipoIntencion)
+      || ((typeof meta.tipo_candidato === 'string' && meta.tipo_candidato) || null),
+    motivo: typeof decisionFinal.motivo === 'string' ? decisionFinal.motivo : null,
+    training_need_congelado: (planPrevisto.training_need && typeof planPrevisto.training_need === 'object')
+      ? planPrevisto.training_need : null
+  };
+}
+
+// Regla 23/C8: un fallo de escritura NUNCA rompe /hoy; se loggea y se
+// conserva la decisión segura ya revalidada. persistenciaPlan.js revalida
+// además plan existente y límite < 3 antes de insertar (doble seguro).
+async function registrarSustitucionAceptadaEnPersistencia({ userId, fecha, planPrevisto, sesionPrevista, decisionFinal }) {
+  try {
+    if (!planPrevisto || !sesionPrevista || !decisionFinal) {
+      console.log('[P2 persistencia] Registro omitido: falta contexto previsto o decisión final (no se inventa).');
+      return { ok: false, motivo: 'contexto_incompleto' };
+    }
+    const registro = construirRegistroSustitucion({ userId, fecha, planPrevisto, sesionPrevista, decisionFinal });
+    if (!registro) {
+      console.log('[P2 persistencia] Registro omitido: faltan datos obligatorios del contrato (no se inventa).');
+      return { ok: false, motivo: 'datos_incompletos' };
+    }
+    const resultado = await persistenciaPlan.registrarSustitucion(registro);
+    if (resultado && resultado.ok) {
+      console.log('[P2 persistencia] ✅ Sustitución registrada' + (resultado.id != null ? ` (id ${resultado.id})` : ''));
+    } else {
+      console.log('[P2 persistencia] Sustitución no persistida:', resultado && resultado.motivo);
+    }
+    return resultado || { ok: false, motivo: 'error' };
+  } catch (err) {
+    console.log('[P2 persistencia] Error al registrar (no bloquea /hoy, regla 23):', err && err.message);
+    return { ok: false, motivo: 'error' };
+  }
+}
+
+// Ejecutor del paso 9 del orden canónico con persistencia (P2). Devoluciones:
+//   evaluacionSustitucion: contrato del adapter (evaluada/estado/motivo/aplicada)
+//   decisionFinalUsada: decisión revalidada si aplicada === true; null si no
+//   planPrevisto / sustitucionesSemana: contexto leído (diagnóstico/auditoría)
+//   registroIntento: resultado de registrarSustitucion (o null si no procedía)
+async function ejecutarSustitucionP2({ state, decisionAjustada, trainingNeed, userId, fecha }) {
+  const candidatoSustitucion = (decisionAjustada && decisionAjustada.esIntencion) ? decisionAjustada : null;
+  if (!candidatoSustitucion) {
+    return {
+      evaluacionSustitucion: { evaluada: false, estado: 'sin_candidato', motivo: 'Sin candidato de sustitución que evaluar', aplicada: false, decisionFinal: null },
+      decisionFinalUsada: null,
+      planPrevisto: null,
+      sustitucionesSemana: null,
+      registroIntento: null
+    };
+  }
+  // Lecturas de persistencia (R1-2): fallo → null; nunca se inventa ni se
+  // desbloquea una sustitución (R8-9, R22). Solo se lee si hay candidato.
+  let planPrevisto = null;
+  let sustitucionesSemana = null;
+  // Lecturas en paralelo pero AISLADAS: si una falla, la otra no se pierde
+  // (R22/C8: fallo → null; nunca se inventa ni se desbloquea una sustitución).
+  const [planLeido, contadorLeido] = await Promise.all([
+    persistenciaPlan.getPlanPrevistoDia(userId, fecha).catch(err => {
+      console.log('[P2 persistencia] Error leyendo plan previsto (degradación segura):', err && err.message);
+      return null;
+    }),
+    persistenciaPlan.getSustitucionesSemana(userId, fecha).catch(err => {
+      console.log('[P2 persistencia] Error leyendo contador semanal (degradación segura):', err && err.message);
+      return null;
+    })
+  ]);
+  planPrevisto = planLeido;
+  sustitucionesSemana = contadorLeido;
+  // Reglas 10-11 + P2-2: sin plan congelado NO hay sesión prevista de
+  // referencia → el flujo degrada sin evaluar ni registrar (nada inventado).
+  if (!planPrevisto || typeof planPrevisto !== 'object') {
+    return {
+      evaluacionSustitucion: {
+        evaluada: false,
+        estado: 'sin_plan_previsto',
+        motivo: 'Sin plan previsto congelado para el día: no hay sesión prevista de referencia para una sustitución (no se inventa plan)',
+        aplicada: false,
+        decisionFinal: null
+      },
+      decisionFinalUsada: null,
+      planPrevisto: null,
+      sustitucionesSemana,
+      registroIntento: null
+    };
+  }
+  const sesionPrevistaSustitucion = construirSesionPrevista(planPrevisto, state);
+  const evaluacionSustitucion = evaluarSustitucionPipeline({
+    sesionPrevista: sesionPrevistaSustitucion,
+    candidato: candidatoSustitucion,
+    trainingNeed,
+    estado: state.estado,
+    restricciones: state.restricciones,
+    sustitucionesSemana
+  });
+  let decisionFinalUsada = null;
+  let registroIntento = null;
+  if (evaluacionSustitucion.aplicada && evaluacionSustitucion.decisionFinal) {
+    // Regla 14: segunda pasada de validarSeguridad() tras la evaluación de
+    // la sustitución y antes del retorno final (el adapter ya gatea, S9;
+    // re-validar aquí es idempotente y deja el invariante explícito).
+    const decisionRevalidada = validarSeguridad(
+      evaluacionSustitucion.decisionFinal,
+      state.estado,
+      state.restricciones
+    );
+    decisionFinalUsada = decisionRevalidada;
+    // Reglas 15-16: si la revalidación rechazó/redujo la sustitución, NO se
+    // registra como aceptada (no se registra lo que no se aplica realmente).
+    if (sustitucionSigueAplicable(candidatoSustitucion, sesionPrevistaSustitucion, decisionRevalidada)) {
+      registroIntento = await registrarSustitucionAceptadaEnPersistencia({
+        userId,
+        fecha,
+        planPrevisto,
+        sesionPrevista: sesionPrevistaSustitucion,
+        decisionFinal: decisionRevalidada
+      });
+    } else {
+      console.log('[P2 persistencia] Sustitución NO registrada: la revalidación de seguridad modificó/redujo la sesión propuesta (reglas 15-16).');
+    }
+  }
+  return {
+    evaluacionSustitucion,
+    decisionFinalUsada,
+    planPrevisto,
+    sustitucionesSemana,
+    registroIntento
+  };
+}
+
+// ─── TRAINING NEED: CONTEXTO SEMANAL (SPEC_V10_F1 §4.2, F2) ────
+// Builder mínimo del contextoSemanal para calcularTrainingNeed().
+// Reutiliza EXACTAMENTE el criterio temporal de contarSesionesCalidadSemana()
+// (index.js ~890): ventana lunes-domingo con hora LOCAL del servidor y
+// formatDate(). No se inventa un criterio nuevo. Riesgo documentado: si el
+// servidor corre en UTC (Render) y el atleta en Europe/Madrid, la frontera
+// semanal puede desplazar sesiones cercanas al cambio de semana — igual que
+// ya ocurre en el contador legacy; se mantiene la consistencia con el código
+// existente (decisión consciente, no bug nuevo).
+function construirContextoSemanal() {
+  const ahora = new Date();
+  const diaSemana = ahora.getDay();
+  const diasDesdeLunes = diaSemana === 0 ? 6 : diaSemana - 1;
+  const lunesEstaSemana = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() - diasDesdeLunes);
+  const lunesStr = formatDate(lunesEstaSemana);
+  const domingoEstaSemana = new Date(lunesEstaSemana.getTime() + 6 * 86400000);
+  const domingoStr = formatDate(domingoEstaSemana);
+
+  const historial = obtenerHistorial();
+  const sesionesSemana = [];
+  historial.forEach(h => {
+    if (!h || !h.fecha) return;
+    const fechaStr = formatDate(new Date(h.fecha));
+    if (fechaStr >= lunesStr && fechaStr <= domingoStr) {
+      sesionesSemana.push({
+        fecha: fechaStr,
+        intensidad: (h.entreno && Number.isFinite(h.entreno.intensidad)) ? h.entreno.intensidad : 0,
+        tss: (h.entreno && Number.isFinite(h.entreno.tssEsperado)) ? h.entreno.tssEsperado : 0
+      });
+    }
+  });
+
+  return {
+    tssObjetivo: getTssObjetivoSemanal(),
+    calidadMax: getMaxSesionesCalidad(),
+    sesionesSemana
+  };
+}
+
+// ─── TRAINING NEED: CAPA INFORMATIVA (SPEC_V10_F1 §4/§6 paso 8) ─
+// Calcula el TN sobre la decisión FINAL (post-gate validarSeguridad)
+// SIN modificar nada: la decisión se pasa por COPIA y el resultado
+// solo se adjunta a la respuesta (nunca alimenta al pipeline).
+// Adapters de formato (verificados contra el pipeline real):
+//  - decision.tssEsperado: el pipeline lo produce en workout
+//    (generateWorkout), no en decision → se inyecta en la COPIA
+//    desde workout.tssEsperado.
+//  - estado.dataQuality: el pipeline produce un OBJETO {estado, fuente,
+//    fecha, motivo}; el módulo espera el STRING enum → se mapea con
+//    'NO_DISPONIBLE' por defecto (y se respeta si ya viene como string).
+function calcularTrainingNeedInformativo(decisionFinal, state) {
+  try {
+    if (!decisionFinal || !state || !state.estado) return null;
+    const dq = state.estado.dataQuality;
+    const dataQualityStr = (typeof dq === 'string') ? dq : ((dq && dq.estado) || 'NO_DISPONIBLE');
+    return calcularTrainingNeed({
+      fecha: formatDate(new Date()),
+      decision: { ...decisionFinal, tssEsperado: state.workout ? state.workout.tssEsperado : undefined },
+      estado: { ...state.estado, dataQuality: dataQualityStr },
+      restricciones: state.restricciones || null,
+      contextoSemanal: construirContextoSemanal(),
+      necesidadesPendientes: null,       // sin persistencia aún (SPEC §5)
+      sustitucionesSemana: null,         // sin registro_sustituciones aún
+      rechazosConsecutivosSimilares: 0
+    });
+  } catch (err) {
+    console.log('[TrainingNeed] ERROR (capa informativa, no bloquea):', err);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🧩 P2B — PLAN PREVISTO DIARIO: GENERACIÓN + LAZY-ENSURE
+// (SPEC_V10_F1 §3.2 + decisión Manu P2B)
+//
+// El baseline congelado es PRE-INTENCIÓN y DETERMINISTA:
+//   decidirEntrenamiento → resolverConflictos → validarSeguridad
+//   → generateWorkout → Training Need → congelarPlanPrevisto
+// NO participan en la congelación: la capa de intención, el ajuste automático
+// (cerebro) ni el Substitution Engine. Queda así:
+//   A = plan original congelado    B = alternativa/intención actual
+// y el Substitution Engine decide después si B puede sustituir a A.
+//
+// Dos vías de congelación (misma fila, misma idempotencia PK + ignoreDuplicates):
+//   - 'cron': scheduler externo → generarPlanPrevistoDia() → getAthleteState()
+//   - 'hoy' : lazy-ensure → ensurePlanPrevistoDia() reutiliza el state YA
+//             calculado en getAthleteStateConAjuste() (sin re-ejecutar nada;
+//             prohibición de recursión P2B).
+// ═══════════════════════════════════════════════════════════════
+
+// Construye la fila del plan previsto desde la decisión BASE (pre-intención).
+// Reglas P2B:
+//   - La decisión base pasa SIEMPRE por validarSeguridad() antes de congelar
+//     (nunca se congela una decisión sin gate; si el gate reduce, se congela
+//     la versión reducida/segura).
+//   - El workout se genera EXACTAMENTE para la decisión que se congela (nunca
+//     se congela el workout de una decisión distinta).
+//   - El training_need congelado es el snapshot del baseline: se calcula sobre
+//     la decisión base (no sobre la decisión post-intención).
+//   - Sin decisión válida → null (no se congela nada, no se inventa plan).
+// Devuelve la fila lista para persistenciaPlan.congelarPlanPrevisto().
+function construirFilaPlanPrevisto({ userId, fecha, state, fuente }) {
+  if (!userId || !fecha || !state || !state.decision || typeof state.decision !== 'object') return null;
+  // Baseline PRE-INTENCIÓN: la decisión del entrenador tras resolverConflictos
+  // (state.decision). Nunca decisionAjustada (intención/cerebro).
+  const decisionBase = validarSeguridad(state.decision, state.estado, state.restricciones);
+  if (!decisionBase || typeof decisionBase !== 'object' || !decisionBase.tipo) return null;
+  const workout = generateWorkout(state.estado, state.restricciones, decisionBase, state.traza);
+  if (!workout || typeof workout !== 'object' || !workout.tipo) return null;
+  const trainingNeed = calcularTrainingNeedInformativo(decisionBase, { ...state, workout });
+  return {
+    user_id: userId,
+    fecha,
+    tipo_previsto: decisionBase.tipo,
+    duracion_prevista_min: Number.isFinite(decisionBase.durMin) ? decisionBase.durMin : null,
+    tss_previsto: Number.isFinite(workout.tssEsperado) ? workout.tssEsperado : null,
+    intensidad_prevista: Number.isFinite(decisionBase.intensidad) ? decisionBase.intensidad : null,
+    es_calidad: computaCalidadBooleana(decisionBase),
+    decision: decisionBase,
+    workout,
+    training_need: trainingNeed,
+    fuente,
+    estado: 'VIGENTE'
+  };
+}
+
+// Generador del plan previsto (scheduler externo, fuente 'cron'):
+// pipeline base getAthleteState() + baseline seguro + congelación.
+// NUNCA llama a getAthleteStateConAjuste() (prohibición de recursión P2B).
+// Idempotente (read-or-freeze): si el plan del día ya existe, se devuelve
+// sin sobrescribirlo. Fallos → { ok:false, motivo } (degradación segura; el
+// lazy-ensure recupera el plan en la siguiente interacción de /hoy).
+async function generarPlanPrevistoDia({ userId, fecha }) {
+  try {
+    if (!userId || !fecha) return { ok: false, motivo: 'parametros_invalidos' };
+    const existente = await persistenciaPlan.getPlanPrevistoDia(userId, fecha);
+    if (existente && typeof existente === 'object') {
+      return { ok: true, creado: false, plan: existente };
+    }
+    const state = await getAthleteState();
+    if (!state || !state.decision) return { ok: false, motivo: 'sin_decision_valida' };
+    const fila = construirFilaPlanPrevisto({ userId, fecha, state, fuente: 'cron' });
+    if (!fila) return { ok: false, motivo: 'sin_decision_valida' };
+    const resultado = await persistenciaPlan.congelarPlanPrevisto(fila);
+    if (!resultado || !resultado.ok) {
+      console.log('[P2B cron] Plan no congelado:', resultado && resultado.motivo);
+      return { ok: false, motivo: (resultado && resultado.motivo) || 'error' };
+    }
+    return { ok: true, creado: true, plan: fila };
+  } catch (err) {
+    console.log('[P2B cron] Error generando plan previsto (no lanza):', err && err.message);
+    return { ok: false, motivo: 'error' };
+  }
+}
+
+// Lazy-ensure (fuente 'hoy'): read-or-freeze SIN volver a ejecutar
+// getAthleteState() ni getAthleteStateConAjuste() (prohibición de recursión).
+// Reutiliza el state YA calculado en getAthleteStateConAjuste():
+//   - si existe plan → devolverlo (el baseline congelado nunca se sobrescribe);
+//   - si no → congelar el baseline PRE-INTENCIÓN (validarSeguridad + workout
+//     exacto + TN snapshot) y devolverlo;
+//   - sin decisión válida → NO congelar nada;
+//   - Supabase caído → { plan:null, creado:false, error } (degradación segura;
+//     /hoy continúa sin excepción).
+async function ensurePlanPrevistoDia({ userId, fecha, state }) {
+  try {
+    if (!userId || !fecha || !state) return { plan: null, creado: false, error: 'parametros_invalidos' };
+    const existente = await persistenciaPlan.getPlanPrevistoDia(userId, fecha);
+    if (existente && typeof existente === 'object') {
+      return { plan: existente, creado: false };
+    }
+    const fila = construirFilaPlanPrevisto({ userId, fecha, state, fuente: 'hoy' });
+    if (!fila) return { plan: null, creado: false, error: 'sin_decision_valida' };
+    const resultado = await persistenciaPlan.congelarPlanPrevisto(fila);
+    if (!resultado || !resultado.ok) {
+      console.log('[P2B ensure] Plan no congelado:', resultado && resultado.motivo);
+      return { plan: null, creado: false, error: (resultado && resultado.motivo) || 'error' };
+    }
+    return { plan: fila, creado: true };
+  } catch (err) {
+    console.log('[P2B ensure] Error (degradación segura, /hoy no se rompe):', err && err.message);
+    return { plan: null, creado: false, error: 'error' };
+  }
+}
+
+// ─── SUBSTITUTION ENGINE: EVALUACIÓN EN PIPELINE (F2, SPEC §6/§7/§9) ───
+// Paso 9 del orden canónico: DESPUÉS del gate y del Training Need. El motor
+// solo EVALÚA (equivalencia §7.2.1, carga ±30% D-18.2, límite semanal D-18.3);
+// el candidato aceptado se re-valida SIEMPRE con validarSeguridad() (§1/§8, S9).
+//
+// ESTADO REAL (sin falsear): NO existe registro_sustituciones → el contador
+// semanal llega a null → el motor devuelve 'dependencia_persistencia' y NO
+// se actúa (cero cambio de comportamiento hasta que exista persistencia).
+// - Candidato: SOLO la intención detectada (§7.3.b) propuesta por la capa de
+//   contexto (decisionAjustada.esIntencion). El disparador conversacional
+//   "no me apetece" (§7.3.a) queda PREPARADO (esta función es genérica) pero
+//   SIN implementar: no hay flujo conversacional ni persistencia.
+// - sesionPrevista: la decisión del entrenador tras resolverConflictos, con
+//   tssEsperado del workout (mismo adapter que Training Need).
+// - Nunca se inventa TSS, contador ni histórico (S10/D-18).
+// Limitación documentada: si el motor acepta (cuando haya persistencia), el
+// TN adjunto describe la sesión previa a la sustitución; recalcular el TN
+// del sustituto queda para la fase de persistencia (SPEC §14 paso 3).
+function evaluarSustitucionPipeline({ sesionPrevista, candidato, trainingNeed, estado, restricciones, sustitucionesSemana }) {
+  try {
+    if (!candidato || !sesionPrevista) {
+      return { evaluada: false, estado: 'sin_candidato', motivo: 'Sin candidato de sustitución que evaluar', aplicada: false, decisionFinal: null };
+    }
+    const resultado = substitutionEngine.evaluarSustitucion({ sesionPrevista, candidato, sustitucionesSemana, trainingNeed });
+    if (resultado.estado === 'aceptada' && resultado.decision_sustituta) {
+      // S9: el gate prevalece SIEMPRE sobre la sustitución propuesta.
+      const decisionFinal = validarSeguridad(resultado.decision_sustituta, estado || {}, restricciones || {});
+      return { evaluada: true, estado: 'aceptada', motivo: resultado.motivo, aplicada: true, decisionFinal };
+    }
+    return {
+      evaluada: true, estado: resultado.estado, motivo: resultado.motivo,
+      aplicada: false, decisionFinal: null,
+      tipo_insuficiencia: resultado.tipo_insuficiencia || null,
+      datos_faltantes: resultado.datos_faltantes || []
+    };
+  } catch (err) {
+    console.log('[SubstitutionEngine] ERROR (evaluación, no bloquea):', err);
+    return { evaluada: false, estado: 'error', motivo: err && err.message, aplicada: false, decisionFinal: null };
   }
 }
 
@@ -7770,6 +8312,30 @@ app.get('/api/config', (req, res) => {
       semana: getSemanaActual()
     }
   });
+});
+
+// ─── RUTA CRON P2B: GENERAR/CONGELAR PLAN PREVISTO DIARIO ──────
+// Scheduler externo → POST /api/cron/plan-diario con cabecera X-Cron-Secret
+// == CONFIG.CRON_SECRET. Invoca SOLO el generador del plan (getAthleteState +
+// baseline seguro + congelarPlanPrevisto con fuente 'cron'); NO es un segundo
+// motor de decisiones y NUNCA llama a getAthleteStateConAjuste(). Idempotente:
+// si el plan del día ya existe, no se sobrescribe. Sin CRON_SECRET configurado
+// → 401 (el generador nunca queda expuesto sin credenciales).
+app.post('/api/cron/plan-diario', async (req, res) => {
+  try {
+    const secret = req.headers['x-cron-secret'];
+    if (!CONFIG.CRON_SECRET || secret !== CONFIG.CRON_SECRET) {
+      return res.status(401).json({ success: false, error: 'No autorizado' });
+    }
+    const resultado = await generarPlanPrevistoDia({
+      userId: CONFIG.ATHLETE_USER_ID,
+      fecha: formatDate(new Date())
+    });
+    res.json({ success: !!resultado.ok, ...resultado });
+  } catch (err) {
+    console.log('[P2B cron] Error en el endpoint (no lanza):', err && err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ─── MANEJO DE ERRORES ───
