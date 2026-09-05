@@ -1,11 +1,12 @@
 # ⚙️ CHECKPOINT DE REANUDACIÓN — WORLD TOUR COACH V10
 
-> **ÚLTIMA POSICIÓN:** **F2 + P1/P2 + P2B IMPLEMENTADOS Y VERIFICADOS — AUDITORÍA P2B COMPLETADA (PASS)**
+> **ÚLTIMA POSICIÓN:** **F2 + P1/P2 + P2B + F2 indoor/calor IMPLEMENTADOS Y VERIFICADOS — 130/130 TESTS VERDES (HEAD `97f5fc5`)**
 >
 > **NO MODIFICAR CÓDIGO HASTA NUEVA AUTORIZACIÓN.**
 >
 > ⛔ Este documento es SOLO para reanudar contexto. No implica permiso de implementación.
-> Fecha: checkpoint tras la auditoría final de P2B (plan previsto diario: generación + lazy-ensure). Batería completa: 103/103 tests verdes.
+> Fecha: checkpoint tras la auditoría documental (05/09/2026) alineando las docs con HEAD `97f5fc5`. Batería completa: **130/130 tests verdes (11 suites)**.
+> Estado Git: rama `freebuff-prueba`, **ahead de `origin` por 2 commits** (`f4e8048`, `97f5fc5`). Nada de esto está en `main` ni pusheado.
 
 ---
 
@@ -22,14 +23,16 @@
 | **Plan previsto diario: generación + lazy-ensure** (P2B) | ✅ Implementado. `generarPlanPrevistoDia` (fuente 'cron') + `ensurePlanPrevistoDia` (fuente 'hoy', read-or-freeze) + endpoint `POST /api/cron/plan-diario` con `X-Cron-Secret` |
 | **Baseline PRE-INTENCIÓN** (P2B) | ✅ Decisión Manu P2B: se congela `state.decision` (tras resolverConflictos + gate + workout + TN snapshot), SIN motorIntencion/cerebro/SE (P2B-16) |
 | **Regla SIN_DATOS** (P2B) | ✅ Nunca se crea una fila artificial `SIN_DATOS`; `congelarPlanPrevisto` la rechaza (C5). Sin datos → simplemente no hay plan (P2B-7) |
-| **Tests completos** | ✅ **103/103** (9 suites): validarSeguridad 9 · trainingNeed 13 · integracionTN 7 · substitutionEngine 10 · integracionSE 8 · ajustarPlanAutomaticamente 5 · persistenciaPlan 18 · integracionP2 16 · **integracionP2B 17** |
+| **F2 indoor/calor** (HI>40 + rodillo/indoor) | ✅ Implementado y verificado (commit `f4e8048`). `estado.indoor` (derivado de la intención 'rodillo') → en vez de descanso por calor: **Z2 máx 45 min / IF 0.70**, sin series, respetando la jerarquía de seguridad (TSB/readiness/ACWR/forzarDescanso mandan por encima). Reglas en `resolverConflictos` (~2567) + `seguridad.js` + señal en `getAthleteState` (~3891). Suite `test_calorIndoor.js` (12/12) |
+| **`analizarCumplimientoPlan()` contra el plan congelado** | ✅ Implementado (commit `f4e8048`). Ahora compara lo REALIZADO contra `plan_previsto_diario` (no contra sí mismo) vía `persistenciaPlan.getPlanesPrevistosFechas()`. Sin tablas → `estado:'error'` (degradación segura). Suite `test_analizarCumplimientoPlan.js` (15/15) |
+| **Tests completos** | ✅ **130/130** (11 suites): validarSeguridad 9 · trainingNeed 13 · integracionTN 7 · substitutionEngine 10 · integracionSE 8 · ajustarPlanAutomaticamente 5 · persistenciaPlan 18 · integracionP2 16 · **integracionP2B 17** · **analizarCumplimientoPlan 15** · **calorIndoor 12** |
 | **Sintaxis (`node --check`)** | ✅ Verificada en `index.js` y los módulos v10 |
 | **Tablas Supabase (`plan_previsto_diario`, `registro_sustituciones`)** | ❌ Pendiente de crear (C10: las crea Manu en Supabase; no hay migración incluida). Sin tablas el módulo degrada (lecturas null, escrituras rechazadas) |
 | **Scheduler real (disparador diario)** | ❌ Endpoint cron listo y protegido; falta decidir variante (§18.1): cron externo apuntando a `/api/cron/plan-diario` (listo) o `setInterval` interno (NO implementado) |
 | **`CRON_SECRET` en el entorno** | ❌ Pendiente de configurar (sin él el endpoint responde 401) |
 | **`aplicarConsecuencias` (§8)** | ❌ NO implementado (fuera de P2B; pendiente de autorización) |
 | **Flujo conversacional "no me apetece" (§7.3.a)** | ❌ Preparado (adapter genérico) pero SIN implementar |
-| **Commit / push / deploy** | ❌ Nada committeado. `git log -1` sigue en `598b802` (commit previo a todo el trabajo V10/F2/P1/P2/P2B) |
+| **Commit / push / deploy** | ⚠️ Committeado en `freebuff-prueba`: `128861f` (P2B + módulos v10), `f4e8048` (F2 indoor + cumplimiento vs plan) y `97f5fc5` (fixes determinismo tests). Rama **ahead de origin por 2**. Sin push, sin deploy, nada en `main` |
 
 ---
 
@@ -40,11 +43,13 @@
 | `seguridad.js` | 🆕 Nuevo | Único dueño de las reglas fisiológicas (ACWR/TSB/readiness/HRV/sueño/calor/intensidadMax/forzarDescanso/forzarZ2). `validarSeguridad(decision, estado, restricciones)` = gate final. Se ejecuta en el bloque P2B **antes** de congelar |
 | `trainingNeed.js` | 🆕 Nuevo | Capa **pura de información/diagnóstico** (TN1–TN13). Adapter `calcularTrainingNeedInformativo` en index.js usado por el pipeline y por la congelación del plan (TN snapshot del baseline) |
 | `substitutionEngine.js` | 🆕 Nuevo | Motor **puro de evaluación** (S1–S10): equivalencia, ±30% TSS, límite 3/semana, grupeta-como-calidad, excepción descanso. NO aplica seguridad (la aplica el caller) |
-| `persistenciaPlan.js` | 🆕 Nuevo (~271 líneas) | **Única capa de acceso** a `plan_previsto_diario` / `registro_sustituciones` (C7/R19): `getPlanPrevistoDia`, `congelarPlanPrevisto` (upsert `ignoreDuplicates`), `getSustitucionesSemana` (COUNT real; error → null), `registrarSustitucion` (solo aceptadas, idempotente). Reglas C1–C10. No crea tablas (C10) |
-| `index.js` | ⚠️ Modificado (+570/−4 vs `598b802`) | CONFIG.CRON_SECRET; gate + TN + **P2B lazy-ensure** + SE con persistencia en `getAthleteStateConAjuste` (~6951); bloque P2 (`ejecutarSustitucionP2` ~7220); bloque P2B (`construirFilaPlanPrevisto`, `generarPlanPrevistoDia`, `ensurePlanPrevistoDia` ~7382-7500); endpoint `POST /api/cron/plan-diario` (~8324) |
+| `persistenciaPlan.js` | 🆕 Nuevo (~297 líneas) | **Única capa de acceso** a `plan_previsto_diario` / `registro_sustituciones` (C7/R19): `getPlanPrevistoDia`, `getPlanesPrevistosFechas` (consulta `.in()` por fechas, usada por `analizarCumplimientoPlan`), `congelarPlanPrevisto` (upsert `ignoreDuplicates`), `getSustitucionesSemana` (COUNT real; error → null), `registrarSustitucion` (solo aceptadas, idempotente). Reglas C1–C10. No crea tablas (C10) |
+| `index.js` | ⚠️ Modificado (vs `598b802`: ~+1632/−465; vs `128861f`: +1066/−466) | CONFIG.CRON_SECRET; señal `estado.indoor` en `getAthleteState` (~3891); gate + TN + **P2B lazy-ensure** + SE con persistencia en `getAthleteStateConAjuste` (7003; gate ~7030, TN ~7036, ensure ~7045, SE ~7055); bloque P2 (`ejecutarSustitucionP2` 7291); bloque P2B (`construirFilaPlanPrevisto` 7482, `generarPlanPrevistoDia` 7513, `ensurePlanPrevistoDia` 7545); `analizarCumplimientoPlan` reescrito (7608); endpoint `POST /api/cron/plan-diario` (8460). **index.js está en CRLF** (salto de línea Windows) |
 | `tests/test_validarSeguridad.js` | 🆕 Nuevo | A0/B0/R1–R7 (9/9) |
 | `tests/test_trainingNeed.js` | 🆕 Nuevo | TN1–TN13 (13/13) |
-| `tests/test_integracionTN.js` | 🆕 Nuevo | I1–I7 (7/7): orden canónico gate→TN en el fuente |
+| `tests/test_integracionTN.js` | 🆕 Nuevo | I1–I7 (7/7): orden canónico gate→TN en el fuente. I7 normaliza CRLF→LF antes de buscar patrones (fix `97f5fc5`) |
+| `tests/test_analizarCumplimientoPlan.js` | 🆕 Nuevo | 15/15: cumplimiento del plan contra `plan_previsto_diario` (CAMBIO 4/D8, fuente única de actividades; estados `sin_plan`/`parcial`/`desviacion`/`ok`/`error`) |
+| `tests/test_calorIndoor.js` | 🆕 Nuevo | CI1–CI12 (12/12): factor calor + rodillo/indoor (jerarquía acordada; ACWR/TSB/readiness mandan) |
 | `tests/test_substitutionEngine.js` | 🆕 Nuevo | S1–S10 (10/10) |
 | `tests/test_integracionSE.js` | 🆕 Nuevo | SU1–SU8 (8/8): adapter del pipeline + orden gate→TN→SE |
 | `tests/test_ajustarPlanAutomaticamente.js` | 🆕 Nuevo | M1–M5 (5/5): no-mutación del ajuste automático |
@@ -118,9 +123,13 @@ generateWorkout()
 
 **El siguiente paso NO es programar más lógica.** Es:
 
-### 5.1 Auditoría P2B — RESULTADO: ✅ PASS (realizada; ver informe de la sesión)
+### 5.1 Auditorías realizadas — RESULTADO: ✅ PASS
 
-Verificados contra SPEC §3.2/§6/§10/§13 y los tests P2B-1…P2B-17: generación del plan, baseline PRE-intención, gate antes de congelar, persistencia idempotente (read-or-freeze), lazy-ensure con reutilización del estado ya calculado, ausencia de recursión, degradación segura, endpoint cron protegido con CRON_SECRET, orden canónico gate→TN→ensure→SE. **103/103 tests verdes.**
+- **Auditoría P2B:** verificados contra SPEC §3.2/§6/§10/§13 y los tests P2B-1…P2B-17: generación del plan, baseline PRE-intención, gate antes de congelar, persistencia idempotente (read-or-freeze), lazy-ensure, no-recursión, degradación segura, endpoint cron protegido, orden canónico gate→TN→ensure→SE.
+- **Auditoría f4e8048 (F2 indoor + cumplimiento vs plan):** calor indoor con jerarquía de seguridad intacta, `analizarCumplimientoPlan` contra `plan_previsto_diario`, 2 suites nuevas.
+- **Auditoría de contexto (05/09/2026):** docs alineadas con HEAD `97f5fc5`; 2 fallos de tests detectados y corregidos (I7 CRLF + M4 fecha-dependiente) → **130/130 tests verdes**.
+
+⚠️ **Nota de los fixes de tests (commit `97f5fc5`):** I7 fallaba porque `index.js` se committeó en CRLF y el test buscaba patrones con `\n` (se normaliza a LF en el test); M4 fallaba los sábados porque la fecha fija del fixture coincidía con el día real (ahora se usa "mañana", que nunca comparte día de la semana con hoy). Ningún fix tocó código de producción.
 
 ### 5.2 Infraestructura (lo único que separa P2B de funcionar en producción)
 
@@ -141,7 +150,7 @@ Replanificación multi-día en cadena, `CONFIG.PERIODO` derivado del calendario 
 
 ### 5.5 Commit / push / deploy
 
-Nada de V10/F2/P1/P2/P2B está committeado (`git log -1` = `598b802`). Requiere autorización explícita.
+F2/P1/P2/P2B/indoor/compliance **sí están committeados** en `freebuff-prueba` (`128861f`, `f4e8048`, `97f5fc5`); la rama está **ahead de origin por 2 commits**. **Sin push ni deploy** (requiere autorización explícita de Manu).
 
 ---
 
@@ -150,8 +159,8 @@ Nada de V10/F2/P1/P2/P2B está committeado (`git log -1` = `598b802`). Requiere 
 Cuando se reanude, seguir ESTE orden exacto:
 
 1. Leer `CHECKPOINT_V10.md` (este archivo).
-2. Leer `docs/SPEC_V10_F1.md` (⚠️ revisar §3.2/§5 contra las decisiones P2B §3 de este checkpoint; la revisión del SPEC no está autorizada).
-3. Leer `persistenciaPlan.js` y el bloque P2B de `index.js` (~7382-7500) si la tarea afecta a P2B.
+2. Leer `docs/SPEC_V10_F1.md` (⚠️ revisado el 05/09/2026 contra las decisiones P2B y el estado real; seguir usando las decisiones §3 de este checkpoint como autoridad).
+3. Leer `persistenciaPlan.js` y el bloque P2B de `index.js` (7482-7584) si la tarea afecta a P2B.
 4. **NO asumir decisiones no documentadas.**
 5. **NO empezar F3.**
 6. **NO modificar código** (gate, TN, SE, persistencia, P2B) sin autorización.
@@ -163,8 +172,8 @@ Cuando se reanude, seguir ESTE orden exacto:
 ## 7. ÚLTIMA POSICIÓN
 
 ```
-POSICIÓN DE REANUDACIÓN: F2 + P1/P2 + P2B IMPLEMENTADOS Y VERIFICADOS (103/103 tests)
-AUDITORÍA P2B: PASS — SIN DISCREPANCIAS BLOQUEANTES
-PENDIENTE OPERATIVO: tablas Supabase + CRON_SECRET + decisión de scheduler (§5.2)
+POSICIÓN DE REANUDACIÓN: F2 + P1/P2 + P2B + F2 indoor/calor IMPLEMENTADOS Y VERIFICADOS (130/130 tests)
+HEAD: 97f5fc5 · rama freebuff-prueba (ahead de origin por 2 commits: f4e8048, 97f5fc5)
+PENDIENTE OPERATIVO: tablas Supabase + CRON_SECRET + scheduler externo + aplicarConsecuencias + flujo "no me apetece"
 NO MODIFICAR CÓDIGO HASTA NUEVA AUTORIZACIÓN.
 ```

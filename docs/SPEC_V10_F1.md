@@ -1,7 +1,8 @@
 # 📐 SPEC F1 — EVOLUCIÓN DE WORLD TOUR COACH v9.5
 
-> Estado: **BORRADOR PARA REVISIÓN — F1 CERRADO, PENDIENTE DE VALIDACIÓN ANTES DE F2**
-> Fecha: 29/08/2026 · Base: v9.5 · Este documento NO implementa nada.
+> Estado: **F1 CERRADO Y VALIDADO — F2 + P1/P2 + P2B + F2 indoor/calor IMPLEMENTADOS Y VERIFICADOS (130/130 tests, HEAD `97f5fc5`, 05/09/2026)**
+> Fecha original: 29/08/2026 · Base: v9.5 · **Revisado el 05/09/2026** para alinear encabezado, §1.2/G-1, §3.2, §3.3, §5, §6, §13 y §18.1 con el estado real del código.
+> ⚠️ Las decisiones de producto cerradas (checkpoint §3 y este §18.2-18.5) NO cambian con esta revisión; solo se actualiza documentación obsoleta y coherencia cruzada.
 > Principio rector: **Construir sobre lo que existe. No reinventar. No crear un proyecto nuevo.**
 
 ---
@@ -22,23 +23,23 @@ Todo lo definido aquí se apoya en el código v9.5 existente (`index.js`, `motor
 
 | Componente | Función | Estado |
 |---|---|---|
-| `getAthleteState()` (index.js:3831) | Orquestador: datos → estado → restricciones → decisión → conflictos → workout | ✅ Conservar intacto |
-| `decidirEntrenamiento()` (2955) | Decide sesión por TSB/fase/TSS semanal/clima/sueño | ✅ Conservar: es el "cerebro de fatiga" |
-| `resolverConflictos()` (2509) | Jerarquía Seguridad > Clima > Fatiga > Plan > Objetivo | ✅ Conservar: es la autoridad de seguridad |
-| `generateWorkout()` (3219) | Single Source of Truth del workout (bloques, TSS/IF esperado) | ✅ Conservar |
-| `motorIntencion.js` + `EQUIVALENCIAS` | Detección de intención, equivalencias grupeta/rodillo/salida | ✅ Conservar: embrión de la equivalencia de sustitución |
-| `ajustarPlanAutomaticamente()` (6822) | Ajusta decisión por patrones históricos de desviación | ⚠️ Evolucionar (§9) |
-| `analizarCumplimientoPlan()` (6995) + `procesarRespuestaDesviacion()` (7110) | Detección y clasificación reactiva de desviaciones | ⚠️ Evolucionar (§9) |
-| `predecirDesviaciones()` (6636) | Predicción de desviación por tipo | ⚠️ Evolucionar (§9) |
-| `obtenerActividadesReales()` (643) | Fuente única de sesiones reales (Supabase/Intervals) | ✅ Conservar |
+| `getAthleteState()` (index.js:3857) | Orquestador: datos → estado → restricciones → decisión → conflictos → workout | ✅ Conservado intacto |
+| `decidirEntrenamiento()` (2981) | Decide sesión por TSB/fase/TSS semanal/clima/sueño | ✅ Conservar: es el "cerebro de fatiga" |
+| `resolverConflictos()` (2516) | Jerarquía Seguridad > Clima > Fatiga > Plan > Objetivo | ✅ Conservar: es la autoridad de seguridad. ⚠️ Desde `f4e8048` incluye la rama **HI>40 + indoor → Z2 máx 45/IF 0.70** (~2567) |
+| `generateWorkout()` (3245) | Single Source of Truth del workout (bloques, TSS/IF esperado) | ✅ Conservar |
+| `motorIntencion.js` + `EQUIVALENCIAS` | Detección de intención, equivalencias grupeta/rodillo/salida | ✅ Conservar: embrión de la equivalencia de sustitución. ⚠️ Desde `f4e8048` su señal `'rodillo'` alimenta `estado.indoor` (HI>40) |
+| `ajustarPlanAutomaticamente()` (6900) | Ajusta decisión por patrones históricos de desviación | ⚠️ Evolucionar (§9); ya NO muta la entrada (trabaja sobre copia, tests M1-M5) |
+| `analizarCumplimientoPlan()` (7608) + `procesarRespuestaDesviacion()` (7788) | Detección y clasificación reactiva de desviaciones | ⚠️ **Reescrito en `f4e8048`:** compara lo REALIZADO contra `plan_previsto_diario` (no contra sí mismo). Evolución §9 pendiente (escritura en `registro_sustituciones` + `aplicarConsecuencias`) |
+| `predecirDesviaciones()` (6714) | Predicción de desviación por tipo | ⚠️ Evolucionar (§9) |
+| `obtenerActividadesReales()` (650) | Fuente única de sesiones reales (Supabase/Intervals) | ✅ Conservar |
 | `obtenerHistorialSupabase()` / `guardarEntrenoSupabase()` | Persistencia `historial_entrenos` | ✅ Conservar |
-| `calcularEstadoSistema()` + `dataQuality` | Estado fisiológico y calidad de datos | ✅ Conservar |
-| Feedback 7 pasos (`procesarMensajeFeedback` 7228) | Registro de sesión realizada con RPE/contexto | ✅ Conservar |
+| `calcularEstadoSistema()` (2148) + `dataQuality` | Estado fisiológico y calidad de datos | ✅ Conservar |
+| Feedback 7 pasos (`procesarMensajeFeedback` 7906) | Registro de sesión realizada con RPE/contexto | ✅ Conservar |
 | Supabase, Garmin/Intervals, clima, Telegram | Infraestructura | ✅ Conservar |
 
 ### 1.2 Gaps estructurales detectados (motivo de la evolución)
 
-1. 🔴 **El plan previsto no se persiste.** `analizarCumplimientoPlan()` (7030-7037) busca el "plan" del día en `historial_entrenos`, pero esa tabla solo se llena cuando el atleta confirma feedback de lo que HIZO (guardarEntrenoHistorial 7333). Compara la sesión realizada consigo misma.
+1. 🔴 **El plan previsto no se persistía.** ~~`analizarCumplimientoPlan()` (7030-7037) buscaba el "plan" del día en `historial_entrenos` y comparaba la sesión realizada consigo misma~~ → **RESUELTO en código (f4e8048/05-09):** `analizarCumplimientoPlan()` (7608) compara ahora contra `plan_previsto_diario` vía `persistenciaPlan.getPlanesPrevistosFechas()`; la persistencia del plan (P2B) y la de sustituciones (P1/P2) están implementadas en `persistenciaPlan.js`. **Pendiente solo de infra:** crear las tablas en Supabase (C10).
 2. 🔴 **Tres mecanismos paralelos adaptan la decisión sin coordinarse** ni dejar registro unificado del porqué: `motorIntencion.adaptarDecisionParaIntencion()`, `ajustarPlanAutomaticamente()` y el aprendizaje de desviaciones.
 3. 🔴 **La jerarquía de seguridad puede ser pisada** después de `resolverConflictos()` (análisis exacto en §10).
 4. 🟠 **No existe "Training Need"**: la necesidad de entrenamiento es implícita y volátil (solo el tipo que sale de decidirEntrenamiento en el momento).
@@ -105,19 +106,19 @@ Todo lo definido aquí se apoya en el código v9.5 existente (`index.js`, `motor
 | **C. Reconstruir a posteriori al registrar la actividad** | Se deduce el plan "de aquel día" después | ❌ No es plan previsto, es reconstrucción. Anula la comparación honesta y viola "nunca inventar datos" |
 | **D. Persistir en la sync de datos ya existente** | Aprovecha proceso existente | 🟡 Válida como disparador secundario, no como único (la sync puede fallar o llegar tarde) |
 
-**Decisión: Opción B con disparador interno + fallbacks perezosos.**
+**Decisión: Opción B — variante EXTERNA implementada (P2B-15); la variante interna sigue pendiente de decisión (§18.1).**
 
-- **Disparador principal:** scheduler interno en el monolito (`setInterval` que comprueba la hora en `CONFIG.TIMEZONE`, dispara una vez al día ~06:30 local). No añade dependencias ni servicios externos; el despliegue real es **Render** (proceso Node persistente; `RENDER_EXTERNAL_URL` en index.js:7811) y `/ping` existe como keep-alive. ⚠️ **Nota de auditoría:** el repo contiene configuración desactualizada de Railway (`railway.json` en raíz, README.md:149 "Despliegue en Railway", PROJECT_CONTEXT.md:103/119/231/332, DECISIONS.md DECISIÓN 7) que NO refleja la plataforma real; `PROJECT_MAP.md:276 y 432` ya advertían de esta discrepancia. **Alternativa equivalente** (decisión pendiente §20): cron externo (GitHub Actions / cron-job.org) → `POST /api/cron/plan-diario` con header secreto. Ambas variantes son compatibles con el resto del spec.
-- **Fallback 1 (lazy-ensure):** si el plan del día no existe, la primera invocación de `/hoy` o `/sync` lo congela antes de mostrar nada.
-- **Fallback 2:** si al congelar `dataQuality === 'NO_DISPONIBLE'` → **NO se congela** ("nunca inventar datos"); reintento cada 2h por el scheduler. Si nunca hubo datos ese día, el plan queda `estado='sin_datos'` y las comparaciones de ese día se omiten.
+- **Disparador implementado (P2B, `f4e8048`):** cron externo (GitHub Actions / cron-job.org) → `POST /api/cron/plan-diario` con cabecera `X-Cron-Secret` == `CONFIG.CRON_SECRET` (sin secret → 401). El endpoint invoca SOLO `generarPlanPrevistoDia` (nunca `getAthleteStateConAjuste`). Idempotente: si el plan del día ya existe, no se sobrescribe. Despliegue real: **Render** (proceso Node persistente; `RENDER_EXTERNAL_URL` en index.js:8513) y `/ping` existe como keep-alive. ⚠️ **NO hay scheduler interno operativo:** el `setInterval` en el monolito NO está implementado (decisión §18.1 abierta). ⚠️ **Nota de auditoría:** el repo contiene configuración desactualizada de Railway (`railway.json` en raíz, README.md:149 "Despliegue en Railway", PROJECT_CONTEXT.md, DECISIONS.md DECISIÓN 7) que NO refleja la plataforma real; `PROJECT_MAP.md:276 y 432` ya advertían de esta discrepancia.
+- **Fallback 1 (lazy-ensure, implementado P2B):** si el plan del día no existe, `ensurePlanPrevistoDia` (fuente `'hoy'`) lo congela reutilizando el state YA calculado en `/hoy` (read-or-freeze, sin re-ejecutar `getAthleteState`).
+- **Fallback 2 (P2B, decisión Manu 12):** si al congelar `dataQuality === 'NO_DISPONIBLE'` (o no hay decisión válida) → **NO se congela nada** ("nunca inventar datos"). **NO se crea fila artificial `estado='sin_datos'`** (`congelarPlanPrevisto` la rechaza, C5); las comparaciones de ese día se omiten porque no hay plan. *(Refina el texto literal original de este Fallback 2.)*
 
 **Reglas de congelación (cerradas):**
 
 | Pregunta | Regla |
 |---|---|
-| Momento de creación | Primera decisión válida del día con dataQuality ≠ NO_DISPONIBLE (normalmente scheduler 06:30) |
+| Momento de creación | Primera decisión válida del día con dataQuality ≠ NO_DISPONIBLE (disparador real: cron externo → `/api/cron/plan-diario`; el scheduler interno 06:30 NO está implementado, §18.1) |
 | Identificador | `fecha` (DATE calendario en `Europe/Madrid`) + `user_id`. UNIQUE por día |
-| Qué se congela | La **decisión final mostrada al atleta**: tras `resolverConflictos` y tras la capa de contexto, con su `workout` completo (tipo, reps, durMin, recSec, intensidad, tssEsperado, ifEsperado, vatios, motivo) y su Training Need (§4) |
+| Qué se congela | **Baseline PRE-INTENCIÓN (decisión Manu P2B-11):** `state.decision` tras `resolverConflictos` + `validarSeguridad` + `generateWorkout` + Training Need snapshot. **NO participan** motorIntencion, ajuste automático ni Substitution Engine. *(Refina el texto literal original "tras la capa de contexto".)* Con su `workout` completo (tipo, reps, durMin, recSec, intensidad, tssEsperado, ifEsperado, vatios, motivo) y su Training Need (§4) |
 | Datos almacenados | `decision` (JSONB), `workout` (JSONB), `training_need` (JSONB), `congelado_en` (timestamptz), `fuente` ('scheduler'/'hoy'/'sync'/'cron'), `estado` |
 | `/hoy` varias veces | Solo la primera congela (upsert `ON CONFLICT DO NOTHING`). Siguientes `/hoy` muestran la decisión del momento; **el plan previsto no se toca** |
 | Estado cambia durante el día | Plan previsto inmutable; decisión actual se recalcula libremente. La validez de una sustitución se valida contra el estado del momento (§7, §10) |
@@ -132,6 +133,8 @@ VIGENTE ──(actividad real sin sustitución)──▶ COMPLETADO
 VIGENTE ──(23:59 sin actividad ni sustitución)──▶ EXPIRADO
 (cualquiera) ──(sin datos fisiológicos todo el día)──▶ SIN_DATOS
 ```
+
+> ⚠️ **ESTADO REAL (05/09/2026): NO implementado.** El código (`persistenciaPlan.js`) solo escribe `estado='VIGENTE'` (valor por defecto) y **rechaza** `SIN_DATOS` (C5); las transiciones a `SUSTITUIDO`/`COMPLETADO`/`EXPIRADO` **no existen** en el código. Esta máquina de estados queda pendiente (relacionada con `aplicarConsecuencias`, §8). No asumir que está operativa.
 
 ---
 
@@ -245,24 +248,32 @@ registro_sustituciones (
 )
 ```
 
-`categoria` reutiliza las categorías ya existentes en `procesarRespuestaDesviacion` (grupeta, cambio_voluntario, imposibilidad, lesion, otro). `decision` ∈ {aceptada, rechazada, parcial}. `consecuencias` = salida de `aplicarConsecuencias` (§8).
+`categoria` reutiliza las categorías ya existentes en `procesarRespuestaDesviacion` (grupeta, cambio_voluntario, imposibilidad, lesion, otro). `decision` ∈ {aceptada, rechazada, parcial}. `consecuencias` = salida de `aplicarConsecuencias` (§8) — **pendiente de implementar**.
+
+> ⚠️ **ALINEACIÓN CON EL CÓDIGO REAL (05/09/2026):** el payload que escribe `persistenciaPlan.js` difiere de este esquema propuesto y es el que debe crearse en Supabase (C10):
+>
+> - `plan_previsto_diario`: PK `(user_id, fecha)`; columnas `decision`/`workout`/`training_need` JSONB, `tipo_previsto`, `duracion_prevista_min`, `tss_previsto`, `intensidad_prevista`, `es_calidad`, `fuente`, `estado` (`congelado_en` depende del DEFAULT de la columna en Supabase; no se envía explícito).
+> - `registro_sustituciones`: columnas `user_id`, `fecha`, `prevista_tipo`, `prevista_tss`, `prevista_duracion_min`, `prevista_es_calidad`, `sustituta_tipo`, `sustituta_tss`, `sustituta_duracion_min`, `sustituta_es_calidad`, `tss_real`, `categoria`, `decision` (solo `'aceptada'`), `motivo`, `training_need_congelado`; índice único parcial `(user_id, fecha) WHERE decision='aceptada'` (idempotencia). **No** se escriben `sesion_original`/`sesion_propuesta`/`training_need_fresco`/`consecuencias`/`creado_en` (reservados para F2/F3 con `aplicarConsecuencias`).
 
 ---
 
 ## 6. FLUJO DE DECISIÓN (orden canónico)
 
-1. `obtenerDatosCompletos()` → `calcularEstadoSistema()` → estado + `dataQuality`.
-2. `aplicarRestriccionesGlobales()` → restricciones.
-3. `decidirEntrenamiento()` → decisión base.
-4. `resolverConflictos()` → **decisión validada en seguridad** (autoridad máxima).
-5. **Capa de contexto** (motor de intención + ajustes históricos, §9): consolida intención/ajustes/declaración del atleta.
-6. **`validarSeguridad()`** → gate obligatorio: revalida NIVEL 1-2 y las restricciones activas. Si se viola, se revierte a la decisión del paso 4. *(Este gate es el prerequisito de seguridad, §10.)*
-7. `generateWorkout()` → workout final.
-8. `calcularTrainingNeed()` → TN.
-9. Congelar en `plan_previsto_diario` si es la primera decisión válida del día.
-10. Mostrar al atleta (`/hoy` etc.).
+> ✅ **Orden real implementado en `getAthleteStateConAjuste()` (index.js:7003, verificado 05/09/2026):**
 
-En v9.5 los pasos 5-6 no existen como gate (la capa de contexto corre sin revalidación); en F2 se introducen sin tocar los pasos 1-4.
+1. `obtenerDatosCompletos()` (1984) → `calcularEstadoSistema()` (2148) → estado + `dataQuality` (+ señal `estado.indoor` desde f4e8048, ~3891).
+2. `aplicarRestriccionesGlobales()` (2891) → restricciones.
+3. `decidirEntrenamiento()` (2981) → decisión base.
+4. `resolverConflictos()` (2516) → **decisión validada en seguridad** (autoridad máxima).
+5. **Capa de contexto** (motor de intención ~7013 + ajustes históricos ~7022, §9): consolida intención/ajustes.
+6. **`validarSeguridad()`** (~7030) → gate obligatorio (seguridad.js): revalida NIVEL 1-2 (incl. HI>40 con/sin indoor) y las restricciones activas. *(Prerequisito de seguridad, §10.)*
+7. **`calcularTrainingNeedInformativo()`** (~7036) → TN (capa informativa, NO muta nada).
+8. **Lazy-ensure P2B** `ensurePlanPrevistoDia` (~7045): congela el baseline PRE-intención (P2B-11) solo si no existe plan.
+9. **Substitution Engine P2** `ejecutarSustitucionP2` (~7055): candidato = intención detectada; comparado contra el plan congelado; re-gate + registro solo si se aplica.
+10. Si hubo intención/ajuste → `generateWorkout()` regenera el workout (~7091); si no, se usa el del pipeline.
+11. Mostrar al atleta (`/hoy` etc.).
+
+En v9.5 los pasos 5-6 no existían como gate; en F2 se introdujeron sin tocar los pasos 1-4. El orden canónico completo gate → TN → ensure P2B → SE P2 está verificado por los tests (I7, P2B-14).
 
 ---
 
@@ -343,53 +354,54 @@ Ninguna implementación futura puede limitarse a registrar `Tempo → Grupeta` y
 
 ### 10.1 Análisis exacto de v9.5 (verificado con evidencia directa)
 
-**Qué puede imponer `resolverConflictos()` (2509-2700):**
+**Qué puede imponer `resolverConflictos()` (2516-2700):**
 
 | Nivel | Disparador | Efecto |
 |---|---|---|
 | 1 SEGURIDAD | TSB<−30 / readiness<30 | `descanso` override |
 | 1 SEGURIDAD | ACWR>1.5 | z2, 25min, IF 0.60 |
-| 2 CLIMA | HI>40 | `descanso` override |
+| 2 CLIMA | HI>40 | `descanso` override (o Z2 máx 45/IF 0.70 si `estado.indoor`, desde f4e8048) |
 | 2 CLIMA | HI>38/35/32 | durMin ×0.80-0.95, tipo→z2 |
 | 3 FATIGA | TSB<−20 | vo2/ftp→sweetspot, durMin≤45, IF 0.85 |
 | 3 FATIGA | HRV<40 | intensidad ×0.80, vo2/ftp→sweetspot |
 | 3 FATIGA | sleep=1 | intensidad ×0.85 |
 
-**Orden real de ejecución (números de línea de llamada):**
+**Orden real de ejecución (números de línea actualizados a HEAD `97f5fc5`):**
 
-1. `getAthleteStateConAjuste()` → línea **6922**: `await getAthleteState()` → dentro, línea **3889**: `resolverConflictos(estado, restricciones, decision, traza)` → **aquí se establece la decisión validada en seguridad**.
-2. Línea **6930-6934**: `motorIntencion.adaptarDecisionParaIntencion(state.decision, intencion, state.estado)` — **muta la decisión ya validada sin ninguna revalidación**.
-3. Línea **6938-6940**: si `!decisionAjustada.esIntencion` → línea **6939**: `ajustarPlanAutomaticamente(decisionAjustada)` — segunda mutación, tampoco revalida. (Cuando la intención actuó en el paso 2, este paso NO corre.)
-4. Línea **6950-6955**: si hubo mutación, `generateWorkout(state.estado, state.restricciones, decisionAjustada, ...)` regenera el workout desde la decisión mutada — **no re-ejecuta `resolverConflictos`**.
+1. `getAthleteStateConAjuste()` (7003) → línea **7005**: `await getAthleteState()` → dentro, línea **3932**: `resolverConflictos(estado, restricciones, decision, traza)` → **aquí se establece la decisión validada en seguridad**.
+2. Línea **7013-7018**: `motorIntencion.adaptarDecisionParaIntencion(state.decision, intencion, state.estado)` — muta la decisión ya validada sin revalidación (lo corrige el gate del paso 6).
+3. Línea **7021-7024**: si `!decisionAjustada.esIntencion` → `ajustarPlanAutomaticamente(decisionAjustada)` (7022) — segunda mutación, tampoco revalida. (Cuando la intención actuó en el paso 2, este paso NO corre.)
+4. Línea **7030**: **`validarSeguridad(decisionAjustada, state.estado, state.restricciones)` — GATE (implementado, seguridad.js)**. A continuación: TN (7036), lazy-ensure P2B (7045), SE P2 (7055).
+5. Línea **7091**: si hubo mutación, `generateWorkout(state.estado, state.restricciones, decisionAjustada, ...)` regenera el workout desde la decisión ya pasada por el gate.
 
-**Fragmento 1 — `resolverConflictos()`, rama ACWR>1.5 (index.js:2541-2551):**
+**Fragmento 1 — `resolverConflictos()`, rama ACWR>1.5 (index.js:2548-2558):**
 
 ```javascript
-if (estado.acwr > 1.5) {                       // 2541
+if (estado.acwr > 1.5) {                       // 2548
   ...
-  resultado.durMin = Math.min(resultado.durMin || 30, 25);   // 2544
-  resultado.tipo = 'z2';                       // 2546
-  resultado.intensidad = 0.60;                 // 2547
-  resultado.reps = 1;                          // 2548
+  resultado.durMin = Math.min(resultado.durMin || 30, 25);   // 2551
+  resultado.tipo = 'z2';                       // 2553
+  resultado.intensidad = 0.60;                 // 2554
+  resultado.reps = 1;                          // 2555
   ...
 }
 ```
 
-**Fragmento 2 — `ajustarPlanAutomaticamente()`, caso que impone IF 0.88 (index.js:6874-6882):**
+**Fragmento 2 — `ajustarPlanAutomaticamente()`, caso que impone IF 0.88 (index.js:6957-6966):**
 
 ```javascript
-} else if (categoriaPrincipal === 'cambio_voluntario') {     // 6874
-  if (tipo === 'vo2' || tipo === 'ftp') {                    // 6876  ← GUARD
-    decision.tipo = 'sweetspot';                             // 6877
-    decision.intensidad = 0.88;                              // 6878
+} else if (categoriaPrincipal === 'cambio_voluntario') {     // 6957
+  if (tipo === 'vo2' || tipo === 'ftp') {                    // 6959  ← GUARD
+    decision.tipo = 'sweetspot';                             // 6960
+    decision.intensidad = 0.88;                              // 6961
 ```
 
-**Fragmento 3 — `aplicarRestriccionesGlobales()`, origen de `intensidadMax` (index.js:2900-2905 y 2914-2915):**
+**Fragmento 3 — `aplicarRestriccionesGlobales()`, origen de `intensidadMax` (index.js:2926-2928):**
 
 ```javascript
-if (estado.flags.estaFatigado && estado.readiness < 60) {    // 2900
-  restricciones.forzarZ2 = true;                             // 2901
-  restricciones.intensidadMax = 0.75;                        // 2902
+if (estado.flags.estaFatigado && estado.readiness < 60) {    // 2926
+  restricciones.forzarZ2 = true;                             // 2927
+  restricciones.intensidadMax = 0.75;                        // 2928
 ```
 
 ### Resultado de la reverificación (con atribución corregida)
@@ -397,7 +409,7 @@ if (estado.flags.estaFatigado && estado.readiness < 60) {    // 2900
 | # | Contradicción | Veredicto |
 |---|---|---|
 | **A** | **CONFIRMADA (la grave).** `adaptarDecisionParaIntencion` rama grupeta (motorIntencion.js:183-204, verificado: sobrescribe `tipo='grupeta'`, `durMin=120`, `intensidad=0.85`, con 0.75 si `tsb<-10` en 199-201) corre en el paso 2 y `detectarIntencion` NO evalúa ACWR, HRV ni sueño → con ACWR>1.5 pisa `z2/25min/0.60` y deja `grupeta/120min/0.85` (o `120min/0.75` si TSB<−10; en ambos casos IF > 0.60 y durMin > 25: pisoteo confirmado, test A0). Lo mismo aplica a cualquier reducción de NIVEL 2-3 (p.ej. HRV<40 → IF≈0.52 en 2632) | ✅ Bug real, atribuido al **motor de intención** |
-| **B** | **NEGADA la variante "ajustarPlanAutomaticamente impone IF 0.88 tras ACWR>1.5".** El IF 0.88 está dentro del guard `tipo === 'vo2' || tipo === 'ftp'` (6876): tras un override ACWR>1.5 el tipo ya es `'z2'` (2546), por lo que el 0.88 es **inalcanzable** en ese escenario. Tras un ACWR>1.5, `ajustarPlanAutomaticamente` solo puede aplicar el caso grupeta-histórica (6859-6866): sube IF 0.60→0.65 — pisoteo residual menor, también sin revalidación | ⚠️ Corregido: esta variante no procede |
+| **B** | **NEGADA la variante "ajustarPlanAutomaticamente impone IF 0.88 tras ACWR>1.5".** El IF 0.88 está dentro del guard `tipo === 'vo2' || tipo === 'ftp'` (6959): tras un override ACWR>1.5 el tipo ya es `'z2'` (2553), por lo que el 0.88 es **inalcanzable** en ese escenario. Tras un ACWR>1.5, `ajustarPlanAutomaticamente` solo puede aplicar el caso grupeta-histórica (6942-6949): sube IF 0.60→0.65 — pisoteo residual menor, también sin revalidación | ⚠️ Corregido: esta variante no procede |
 | **C** | El IF 0.88 de `ajustarPlanAutomaticamente` SÍ es una contradicción real, pero contra `restricciones.intensidadMax` (0.75 fatiga acumulada / 0.90 calor) y **solo cuando no hubo trigger NIVEL 1-3** y el tipo sigue siendo vo2/ftp. Verificación menor pendiente en F2: si `decidirEntrenamiento` ya clampea contra `intensidadMax` al decidir, este caso podría no llegar a materializarse; el gate del §10.2 lo cubre en cualquier caso | ✅ Bug real (condicionado) |
 | **D** | `adaptarDecisionParaIntencion` salida_tranquila (motorIntencion.js:217-228, verificado: `durMin=60` en línea 220) pisa el cap `durMin=45` de TSB<−20 (index.js:2621-2624) | ✅ Bug real |
 
@@ -413,21 +425,21 @@ if (estado.flags.estaFatigado && estado.readiness < 60) {    // 2900
 - **Cambio mínimo necesario (en F2, no antes):** extraer `validarSeguridad(decision, estado, restricciones)` que re-ejecute los chequeos NIVEL 1-2 y clampee contra `restricciones.intensidadMax`, `volumenMax`, `zonasPermitidas`, `forzarZ2`, `forzarDescanso`; invocarlo al final de `getAthleteStateConAjuste` y en cada aceptación de sustitución. Es un refactor de extracción (reutiliza la lógica existente), sin tocar los pasos 1-4 del pipeline.
 - **Estado:** BLOQUEANTE. F2 no se considera implementable sin este gate funcionando y verificado con tests.
 
-> **📌 DECISIÓN F2 — CIERRE DEL GATE (29/08/2026):** Se detectaron 5 caminos formales sin gate hacia `generateWorkout()` (fallback `catch` de `getAthleteStateConAjuste()` en 6998, `chatConIA()` en 1058, `analizarCumplimientoPlan()` en 7006, `GET /api/estado` en 7737 y `POST /api/comando` en 7751), todos seguros por construcción hoy: en ninguno de ellos se ejecutan las capas mutadoras y las decisiones llegan directamente desde `resolverConflictos()`. Se decide NO cerrarlos estructuralmente y confiar en la regla arquitectónica de que **ninguna capa mutadora puede ejecutarse después de `validarSeguridad()`**. Cualquier futura capa mutadora, incluido el Substitution Engine, debe ejecutarse antes del gate y respetar explícitamente este invariante. Las capas puramente informativas/diagnósticas (p. ej. Training Need) no son mutadoras y no quedan sujetas a esta restricción de colocación.
+> **📌 DECISIÓN F2 — CIERRE DEL GATE (29/08/2026):** Se detectaron 5 caminos formales sin gate hacia `generateWorkout()` (fallback `catch` de `getAthleteStateConAjuste()` en 7132, `chatConIA()` en 1038, `analizarCumplimientoPlan()` en 7608, `GET /api/estado` en 8405 y `POST /api/comando` en 8415), todos seguros por construcción: en ninguno de ellos se ejecutan las capas mutadoras y las decisiones llegan directamente desde `resolverConflictos()`. Se decide NO cerrarlos estructuralmente y confiar en la regla arquitectónica de que **ninguna capa mutadora puede ejecutarse después de `validarSeguridad()`**. Cualquier capa mutadora, incluido el Substitution Engine, debe ejecutarse antes del gate y respetar explícitamente este invariante. Las capas puramente informativas/diagnósticas (p. ej. Training Need) no son mutadoras y no quedan sujetas a esta restricción de colocación. *(Líneas actualizadas a HEAD `97f5fc5`.)*
 
 ---
 
-## 11. ALCANCE F2 — Substitution Engine v1 (qué se implementará)
+## 11. ALCANCE F2 — Substitution Engine v1 (estado de implementación, 05/09/2026)
 
-1. **`validarSeguridad()`** — gate del §10.2 (bloqueante, primero).
-2. **`calcularTrainingNeed()`** — TN según §4, derivado del pipeline existente (bloques A-D).
-3. **Congelación del plan previsto** — scheduler interno diario + lazy-ensure en `/hoy`/`/sync`, upsert idempotente en `plan_previsto_diario` (§3.2), incluida la regla `sin_datos`.
-4. **Tablas nuevas** — `plan_previsto_diario` y `registro_sustituciones` (migración, única de F2).
-5. **Registro de sustituciones** — flujo conversacional "no me apetece" (reutilizando el patrón `esperando_respuesta_desviacion`), y conexión de la intención del motor de intención y de las desviaciones detectadas como entradas de sustitución (§7.3).
-6. **Reglas de decisión v1** — las 5 reglas del §7.2 (equivalencia, carga ±30%, calidad semanal, seguridad, contexto posterior).
-7. **`aplicarConsecuencias()`** — v1 según §8: impacto en TSS semanal, TN del día siguiente, reprogramación/cancelación de necesidades, contadores del bloque D.
-8. **Transición §9** — motor de intención y `ajustarPlanAutomaticamente` pasan a proponer/señalar; desviaciones escriben en `registro_sustituciones`.
-9. **Tests unitarios** con mocks (mock de Supabase y de reloj) para: TN, congelación/idempotencia, reglas de sustitución, gate de seguridad, consecuencias.
+1. **`validarSeguridad()`** — gate del §10.2 → ✅ **IMPLEMENTADO** (`seguridad.js`, conectado en `getAthleteStateConAjuste` ~7030 y en el re-gate del SE; suite 9/9).
+2. **`calcularTrainingNeed()`** — TN según §4 → ✅ **IMPLEMENTADO** (`trainingNeed.js` + adapter `calcularTrainingNeedInformativo`, capa informativa post-gate; suites 13/13 + integración 7/7).
+3. **Congelación del plan previsto** — ✅ **IMPLEMENTADO** (P2B): cron externo (`POST /api/cron/plan-diario`, fuente `'cron'`) + lazy-ensure en `/hoy` (fuente `'hoy'`, `ensurePlanPrevistoDia` 7545), upsert idempotente en `plan_previsto_diario`; regla **sin fila `sin_datos`** (P2B-12). ⚠️ El **scheduler interno** (`setInterval`) NO está implementado (decisión §18.1 abierta).
+4. **Tablas nuevas** — `plan_previsto_diario` y `registro_sustituciones` → ❌ **PENDIENTE** (C10: las crea Manu en Supabase; `persistenciaPlan.js` no crea tablas). Esquema alineado en §5.
+5. **Registro de sustituciones** — ⚠️ **PARCIAL:** la conexión de la intención del motor de intención como entrada de sustitución está implementada (P2, `ejecutarSustitucionP2` 7291, solo aceptadas); las desviaciones detectadas (`analizarCumplimientoPlan`) ya leen el plan congelado pero **NO escriben** `registro_sustituciones` todavía; el flujo conversacional **"no me apetece" NO está implementado** (patrón `esperando_respuesta_desviacion` preparado).
+6. **Reglas de decisión v1** — ✅ **IMPLEMENTADAS** en `substitutionEngine.js` (S1-S10): equivalencia, carga ±30% (excepción descanso), límite 3/semana, seguridad (la aplica el caller), grupeta-como-calidad. ⚠️ La regla 5 (contexto posterior → `aplicarConsecuencias`) queda pendiente (item 7).
+7. **`aplicarConsecuencias()`** — §8 → ❌ **NO IMPLEMENTADO** (pendiente de autorización).
+8. **Transición §9** — ❌ **NO implementada**: `motorIntencion.adaptarDecisionParaIntencion` y `ajustarPlanAutomaticamente` siguen siendo mutadores (este último ya sin mutar la entrada, copia). Las desviaciones aún no escriben en `registro_sustituciones`.
+9. **Tests unitarios** con mocks → ✅ **IMPLEMENTADOS**: 130/130 (11 suites) con mocks de Supabase (`__setCliente`) y extracción de fuente para el monolito.
 
 **Comportamiento exigido al Substitution Engine v1:** ante cualquier propuesta de cambio de sesión, debe responder las tres preguntas con datos, no con intuición: *¿es equivalente? (§7.2.1-2) ¿es seguro y está permitido? (§10 + §7.2.4) ¿qué consecuencias tiene? (§8)* — y dejar ambas decisiones y sus TN registrados.
 
@@ -444,18 +456,18 @@ if (estado.flags.estaFatigado && estado.readiness < 60) {    // 2900
 
 ---
 
-## 13. DEFINITION OF DONE — F2
+## 13. DEFINITION OF DONE — F2 (estado real, 05/09/2026)
 
-F2 está terminada cuando:
+F2 está terminada cuando — **estado actual marcado por item:**
 
-1. Un día sin que el atleta abra `/hoy` deja plan previsto congelado en Supabase (verificable con test del scheduler con reloj simulado).
-2. `/hoy` repetido no muta el plan congelado; `dataQuality=NO_DISPONIBLE` impide congelar (regla `sin_datos` probada).
-3. El TN congelado y el TN fresco se generan y se almacenan con el esquema §5, y cada campo traza su origen en el pipeline v9.5.
-4. El gate §10.2 existe y hay un test que demuestra que una grupeta propuesta con ACWR>1.5 **no** puede sobrepasar z2/25min/0.60.
-5. El flujo `Tempo → "no me apetece" → grupeta` funciona de principio a fin y produce: registro en `registro_sustituciones` (con TN congelado + fresco), decisión explicada al atleta en tono de entrenador, y consecuencias aplicadas (TN del día siguiente con la grupeta contabilizada como calidad).
-6. Los 5 casos límite del §15 pasan como tests con los TN del §16.
-7. Ninguna función de v9.5 fue eliminada ni su comportamiento cambió salvo lo especificado en §9 (verificación: los comandos existentes responden igual cuando no hay sustituciones en juego).
-8. Sin commits de implementación mezclados con otras tareas; migración reversible documentada.
+1. Un día sin que el atleta abra `/hoy` deja plan previsto congelado en Supabase (verificable con test del scheduler con reloj simulado). → ⚠️ **PARCIAL:** la congelación por cron externo + lazy-ensure está implementada y testeada (P2B), pero **no hay scheduler interno con reloj simulado** (variante §18.1 abierta) y faltan las tablas (C10) para que funcione en producción.
+2. `/hoy` repetido no muta el plan congelado; `dataQuality=NO_DISPONIBLE` impide congelar (regla `sin_datos` probada). → ✅ **CUMPLIDO** (P2B-2/3/4/7: read-or-freeze, no-sobrescritura, sin fila `SIN_DATOS`).
+3. El TN congelado y el TN fresco se generan y se almacenan con el esquema §5, y cada campo traza su origen en el pipeline v9.5. → ⚠️ **PARCIAL:** el TN congelado se genera y persiste (P2B); el **TN fresco** en el registro de sustitución y el esquema §5 (alineado en la revisión) dependen de tablas y de `aplicarConsecuencias`.
+4. El gate §10.2 existe y hay un test que demuestra que una grupeta propuesta con ACWR>1.5 **no** puede sobrepasar z2/25min/0.60. → ✅ **CUMPLIDO** (seguridad.js + tests A0/B0/R1-R7; además CI1-CI12 para el calor indoor).
+5. El flujo `Tempo → "no me apetece" → grupeta` funciona de principio a fin y produce: registro en `registro_sustituciones` (con TN congelado + fresco), decisión explicada, y consecuencias aplicadas. → ❌ **NO CUMPLIDO:** el flujo conversacional "no me apetece" NO está implementado; `aplicarConsecuencias` tampoco.
+6. Los 5 casos límite del §15 pasan como tests con los TN del §16. → ⚠️ **PARCIAL:** las reglas del motor están testeadas (S1-S10, TN1-TN13, P2/P2B), pero los 5 casos §15 **no** están testeados de extremo a extremo (flujo conversacional completo pendiente).
+7. Ninguna función de v9.5 fue eliminada ni su comportamiento cambió salvo lo especificado en §9. → ✅ **CUMPLIDO** (los comandos existentes responden igual; `ajustarPlanAutomaticamente` ahora no muta la entrada, cambio de seguridad verificado por tests M1-M5).
+8. Sin commits de implementación mezclados con otras tareas; migración reversible documentada. → ⚠️ **PARCIAL:** commits limpios en `freebuff-prueba` (`128861f`, `f4e8048`, `97f5fc5`) pero sin migración incluida (tablas C10 a mano) y sin push/deploy.
 
 ---
 
@@ -476,7 +488,7 @@ F2 está terminada cuando:
 
 ## 15. CASOS LÍMITE DEL GATE (los que F2 debe manejar en v1)
 
-> Para cada caso: **caso límite → Training Need concreto (JSON) → valores → decisión → resultado**. Los 5 pasan como tests en F2 (DoD #6).
+> Para cada caso: **caso límite → Training Need concreto (JSON) → valores → decisión → resultado**. ⚠️ Estado real (05/09/2026): las reglas del motor están testeadas, pero **los 5 casos NO están testeados de extremo a extremo** (falta el flujo conversacional "no me apetece" y `aplicarConsecuencias`; ver DoD #6). Se conservan como especificación para completar F2/F3.
 
 ### CASO 1 — Rechazo puntual de la calidad: `Tempo → "no me apetece" → grupeta`
 
@@ -621,26 +633,28 @@ F2 está terminada cuando:
 
 | # | Gap | Resolución adoptada en este spec | Queda abierto |
 |---|---|---|---|
-| G-1 | El plan previsto no se persistía; `analizarCumplimientoPlan` comparaba lo realizado consigo mismo (7030-7037) | §3: tabla `plan_previsto_diario` + scheduler + lazy-ensure | No |
-| G-2 | Sin Training Need | §4 completo (4 bloques, cada campo con función de decisión) | No |
-| G-3 | Sin registro de sustituciones con motivo y consecuencias | §5 + §7 + §8: `registro_sustituciones` con `training_need_congelado`/`fresco` y `consecuencias` | No |
-| G-4 | La seguridad podía pisarse post-conflictos (verificado) | §10: `validarSeguridad()` como prerequisito bloqueante de F2 | No (implementación en F2) |
-| G-5 | Doble clasificador de tipo real (NP vs EQUIVALENCIAS) | §7.2.1: las clases de `EQUIVALENCIAS` pasan a ser las únicas; `analizarCumplimientoPlan` las usa también para NP | No |
+| G-1 | El plan previsto no se persistía; `analizarCumplimientoPlan` comparaba lo realizado consigo mismo | §3: tabla `plan_previsto_diario` + scheduler + lazy-ensure. **Estado real:** resuelto en código (f4e8048/05-09): persistencia P2B implementada y `analizarCumplimientoPlan` (7608) compara contra `plan_previsto_diario` vía `getPlanesPrevistosFechas`. Pendiente solo de tablas (C10) y scheduler | No (en código) |
+| G-2 | Sin Training Need | §4 completo (4 bloques, cada campo con función de decisión) — **implementado** (`trainingNeed.js`, capa informativa) | No |
+| G-3 | Sin registro de sustituciones con motivo y consecuencias | §5 + §7 + §8: `registro_sustituciones` con `training_need_congelado`/`fresco` y `consecuencias` — **parcial:** registro implementado (solo `'aceptada'`, P2); `training_need_fresco` y `consecuencias` pendientes de `aplicarConsecuencias` | No (parcial) |
+| G-4 | La seguridad podía pisarse post-conflictos (verificado) | §10: `validarSeguridad()` como prerequisito bloqueante de F2 — **implementado** (`seguridad.js`, gate + re-gate del SE) | No |
+| G-5 | Doble clasificador de tipo real (NP vs EQUIVALENCIAS) | §7.2.1: las clases de `EQUIVALENCIAS` pasan a ser las únicas; `analizarCumplimientoPlan` las usa también para NP — ⚠️ **pendiente:** `analizarCumplimientoPlan` sigue usando el clasificador por NP/IF (~7640) y el SE usa `EQUIVALENCIAS`; la unificación queda para la transición §9/F3 | **Sí (pendiente)** |
 | G-6 | `CONFIG.PERIODO` estático: fase/semana no derivan del calendario | No bloquea F2 (el TN usa `getTssObjetivoSemanal()` tal cual existe). Migración a calendario real → F3 | **Sí (F3)** |
-| G-7 | `scriptProperties` es memoria pura; `aprendizaje_desviaciones` se pierde al reiniciar | §5: escritura espejo en `registro_sustituciones` desde F2 | No |
-| G-8 | "Calidad realizada" no está definida operativamente para el contador | Definición F1: cuenta si `objetivo_sesion='calidad'` Y (IF real ≥0.80 o sustitución aceptada como calidad) | No |
-| G-9 | Sin definición de "semana" para los contadores del bloque D | Definición F1: semana en curso según `getFaseActual()`/`CONFIG.TIMEZONE` (misma convención que `weeklyTss` v9.5) | No |
+| G-7 | `scriptProperties` es memoria pura; `aprendizaje_desviaciones` se pierde al reiniciar | §5: escritura espejo en `registro_sustituciones` desde F2 — ⚠️ **pendiente:** el registro P2 existe, pero las desviaciones conversacionales siguen escribiendo en `aprendizaje_desviaciones` (memoria); la escritura espejo no está implementada | **Sí (pendiente)** |
+| G-8 | "Calidad realizada" no está definida operativamente para el contador | Definición F1: cuenta si `objetivo_sesion='calidad'` Y (IF real ≥0.80 o sustitución aceptada como calidad) — **implementado** en Training Need (`UMBRAL_IF_CALIDAD=0.80`); contador legacy `contarSesionesCalidadSemana` (IF>0.85) intacto (F3) | No |
+| G-9 | Sin definición de "semana" para los contadores del bloque D | Definición F1: semana en curso según `getFaseActual()`/`CONFIG.TIMEZONE` (misma convención que `weeklyTss` v9.5) — **implementado** (`fechaSemanaDe` en `persistenciaPlan.js`) | No |
 
-## 17. PREREQUISITOS PARA AUTORIZAR F2
+## 17. PREREQUISITOS PARA AUTORIZAR F2 — ESTADO (05/09/2026)
 
-1. **Revisión conjunta de este spec** (especialmente §4, §7, §10 y los casos §15).
-2. **Decisión del usuario** sobre: variante de scheduler (interno vs cron externo, §3.2) y confirmación de las reglas §7.2 (±30% TSS, máx 1 reprogramación, límite de flip-flop).
-3. **Aceptación de que `validarSeguridad()` (§10.2) es el primer entregable de F2** y bloqueante del resto.
-4. Confirmación de que G-6 (periodo estático) queda aceptado como limitación conocida durante F2.
+> Todos cumplidos en su día (F2 fue autorizada e implementada). Se conservan como histórico:
+
+1. ✅ Revisión conjunta de este spec (especialmente §4, §7, §10 y los casos §15).
+2. ✅ Decisión del usuario sobre scheduler y reglas §7.2 — **reglas confirmadas e implementadas** (§18.2-18.5); la variante de scheduler quedó abierta y hoy la preparada es el **cron externo** (§18.1).
+3. ✅ `validarSeguridad()` (§10.2) entregada como primer entregable de F2 — implementada y conectada.
+4. ✅ G-6 (periodo estático) aceptado como limitación conocida durante F2.
 
 ## 18. DECISIONES PENDIENTES PARA REVISAR JUNTOS
 
-1. **Scheduler:** ¿interno (`setInterval` en el monolito) o cron externo con endpoint protegido? (§3.2; recomendado: interno por simplicidad, externo si se quiere independencia de reinicios de Railway).
+1. **Scheduler:** ¿interno (`setInterval` en el monolito) o cron externo con endpoint protegido? (§3.2; recomendado: interno por simplicidad, externo si se quiere independencia de reinicios). **Estado real (05/09/2026):** la variante **cron externo** (→ `POST /api/cron/plan-diario` con `X-Cron-Secret`) está **implementada y lista** (P2B-15); el **`setInterval` interno NO está implementado**. Decisión de operar el cron (GitHub Actions / cron-job.org) y `CRON_SECRET` pendientes de infraestructura.
 2. **Umbral de carga para sustituciones — RESUELTA (aprobado en revisión F2):** **±30% del TSS de la sesión prevista, rango estricto**, implementado en el Substitution Engine (`TOLERANCIA_CARGA=0.30`). Fuera del rango → NO VÁLIDO, sin redondeos (tolerancia aritmética de coma flotante 1e-9 únicamente). Única excepción: candidato `descanso` (§18.5). Implementado en substitutionEngine.js (tests S1-S4).
 3. **Regla de flip-flop — RESUELTA (aprobada en revisión F2):** **máximo 3 sustituciones por semana; la 4.ª se rechaza SIEMPRE, sin excepciones** (incluida grupeta y descanso espontáneo). La antigua formulación del CASO 5 ("salvo descanso/equivalente") queda superada. Implementado en substitutionEngine.js (`LIMITE_SUSTITUCIONES_SEMANA=3`, tests S5). El contador llega como input explícito del caller desde `registro_sustituciones` cuando exista (no hay reconstrucción histórica).
 4. **Grupeta como calidad — RESUELTA (aprobada en revisión F2):** una sesión cuenta como calidad realizada con **IF real ≥0.80** (grupeta incluida); no se adopta la variante IF ≥0.75 + duración ≥90min. Implementado en Training Need (`UMBRAL_IF_CALIDAD=0.80`, trainingNeed.js:37; tests TN9). El contador legacy `contarSesionesCalidadSemana()` (index.js:905-906, IF>0.85) responde al mismo concepto con umbral distinto y queda **intacto en v9.5**: se unificará con la transición §9 (retirada de mutadores, F3). (G-8).
@@ -662,4 +676,6 @@ F2 está terminada cuando:
 
 ## 🔒 ESTADO FINAL
 
-**F1 CERRADA.** Ningún archivo de producción ha sido modificado; el único artefacto es este spec (`docs/SPEC_V10_F1.md`). **DETENIDO: no se inicia F2 hasta revisar juntos este documento, los prerequisitos (§17) y las decisiones pendientes (§18).**
+**F1 CERRADA Y VALIDADA (29/08/2026) · F2 + P1/P2 + P2B + F2 indoor/calor IMPLEMENTADOS Y VERIFICADOS (05/09/2026, 130/130 tests, HEAD `97f5fc5`).**
+
+Estado real resumido: gate `validarSeguridad`, Training Need (informativo), Substitution Engine con persistencia (P2), plan previsto con lazy-ensure y cron externo (P2B), y la regla de calor indoor (HI>40 + rodillo → Z2 máx 45/IF 0.70) están implementados y conectados. **Pendiente:** tablas Supabase `plan_previsto_diario`/`registro_sustituciones` (C10, infra de Manu), `CRON_SECRET` y operación del cron externo (§18.1), `aplicarConsecuencias` (§8), flujo conversacional "no me apetece" (§7.3.a), transición §9, máquina de estados §3.3 y unificación del clasificador G-5. Documento revisado el 05/09/2026 para reflejar este estado; las decisiones de producto cerradas (checkpoint §3, §18.2-18.5) no han cambiado.

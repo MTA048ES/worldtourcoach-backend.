@@ -1,8 +1,9 @@
 # 🧠 WORLD TOUR COACH — PROJECT CONTEXT
 
 > **Documentación oficial del proyecto**
-> Última actualización: 06/08/2026
-> Versión: v9.5
+> Última actualización: 05/09/2026 (alineada con HEAD `97f5fc5`; rama `freebuff-prueba`)
+> Versión: v9.5 (backend V10: F2/P1/P2/P2B + F2 indoor implementados — ver §2bis)
+> ⚠️ Para el estado técnico al día del backend V10 usar `CHECKPOINT_V10.md` (raíz) y `SPEC_V10_F1.md` (esta carpeta). Este documento describe la arquitectura general.
 
 ---
 
@@ -43,8 +44,8 @@
                            │ Webhook POST /webhook
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    EXPRESS SERVER (Node.js)                 │
-│                    index.js (6683 líneas)                   │
+│                    EXPRESS SERVER (Node.js 22)              │
+│                    index.js (~8.603 líneas)                 │
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
 │  │  Webhook     │  │  Cola de     │  │  Procesador de   │  │
@@ -89,18 +90,42 @@
 
 ---
 
+## 3bis. V10 — MEMORIA DE PLANIFICACIÓN (F2/P1/P2/P2B + F2 indoor) — ESTADO 05/09/2026
+
+> Resumen ejecutivo para documentación oficial. Detalle técnico: `CHECKPOINT_V10.md` (raíz) y `docs/SPEC_V10_F1.md`. No reescribe decisiones de producto cerradas.
+
+**Implementado y verificado (130/130 tests):**
+
+- **Gate de seguridad (`seguridad.js`):** `validarSeguridad()` revalida la decisión tras las capas mutadoras (intención/ajuste) y antes de `generateWorkout`. Jerarquía: TSB/readiness/forzarDescanso → descanso; ACWR>1.5 → z2/25/0.60; HI>40 exterior → descanso; **HI>40 + indoor/rodillo → Z2 máx 45 min / IF 0.70** (las reglas fisiológicas mandan por encima).
+- **Training Need (`trainingNeed.js`):** capa puramente informativa/diagnóstica (4 bloques A-D), post-gate, no muta la decisión.
+- **Substitution Engine (`substitutionEngine.js`):** reglas v1 (equivalencia por `objetivo_sesion`/`EQUIVALENCIAS`, ±30% TSS estricto, límite 3 sustituciones/semana, grupeta-como-calidad IF≥0.80, excepción descanso). NO aplica seguridad (lo hace el caller).
+- **Persistencia (`persistenciaPlan.js`, ~297 l.):** única capa de acceso a `plan_previsto_diario` / `registro_sustituciones` (reglas C1-C10); `getPlanesPrevistosFechas()` alimenta el cumplimiento.
+- **Plan previsto P2B:** congelación del baseline **PRE-intención** (sin motorIntencion/SE) vía cron externo (`POST /api/cron/plan-diario`, `X-Cron-Secret`) + lazy-ensure en `/hoy`; idempotente; **sin fila artificial `SIN_DATOS`**.
+- **Cumplimiento:** `analizarCumplimientoPlan()` (index.js:7608) compara lo REALIZADO contra `plan_previsto_diario` (ya no contra sí mismo).
+- **F2 indoor:** señal `estado.indoor` (intención 'rodillo') → HI>40 no fuerza descanso en rodillo, sino Z2 controlado 45'/IF 0.70.
+
+**Pendiente (infra y resto de F2):**
+
+- Tablas Supabase `plan_previsto_diario` / `registro_sustituciones` (C10, tarea de Manu) — sin ellas el módulo degrada con seguridad (ver §9).
+- `CRON_SECRET` en el entorno; operar el cron externo (la variante `setInterval` interno NO está implementada; decisión §18.1 del SPEC abierta).
+- `aplicarConsecuencias` (§8) y el flujo conversacional "no me apetece" (§7.3.a) — no implementados.
+- Transiciones de estado VIGENTE→SUSTITUIDO→COMPLETADO→EXPIRADO (SPEC §3.3) — no implementadas.
+- Unificación del clasificador de tipo real (G-5) y escritura espejo de desviaciones en `registro_sustituciones` (G-7) — transición §9/F3.
+
+---
+
 ## 4. TECNOLOGÍAS
 
 | Tecnología | Uso |
 |---|---|
-| **Node.js 18+** | Runtime principal |
+| **Node.js 22** (`.nvmrc`) | Runtime principal |
 | **Express 4** | Servidor HTTP y webhook |
 | **Telegram Bot API** | Interfaz de usuario |
 | **Supabase** | Base de datos PostgreSQL + persistencia |
 | **Intervals.icu API** | Datos de entrenamiento (TSS, CTL, ATL, actividades) |
 | **OpenRouter AI** | Asistente IA (opcional, modelos gratuitos) |
 | **OpenWeatherMap** | Datos meteorológicos (Heat Index) |
-| **Railway** | Plataforma de despliegue (Nixpacks) |
+| **Render** | Plataforma de despliegue real (proceso Node persistente) |
 | **node-fetch** | Cliente HTTP |
 | **form-data** | Multipart para APIs |
 | **dotenv** | Variables de entorno |
@@ -112,11 +137,15 @@
 
 ```
 worldtourcoach-backend/
-├── index.js              # Archivo principal (6683 líneas) - TODO el sistema
+├── index.js              # Archivo principal (~8.603 líneas) - TODO el sistema
 ├── motorIntencion.js     # Motor de intención (382 líneas) - Capa de contexto humano
+├── seguridad.js          # Gate final de seguridad V10 (ACWR/TSB/readiness/calor/indoor)
+├── trainingNeed.js       # Diagnóstico Training Need V10 (capa informativa)
+├── substitutionEngine.js # Substitution Engine V10 (reglas ±30% TSS, límite 3/semana)
+├── persistenciaPlan.js   # Única capa Supabase V10 (~297 l.): plan_previsto_diario / registro_sustituciones
 ├── package.json          # Dependencias y scripts
 ├── package-lock.json     # Lock de dependencias
-├── railway.json          # Configuración de despliegue Railway
+├── railway.json          # Configuración heredada de Railway (NO vigente; el despliegue real es Render)
 ├── README.md             # Documentación básica
 ├── ENV                   # Variables de entorno (sin extensión)
 ├── .gitignore            # Archivos ignorados
@@ -134,7 +163,7 @@ worldtourcoach-backend/
 ## 6. FLUJO DE EJECUCIÓN
 
 1. **Usuario escribe comando** en Telegram (ej: `/hoy`)
-2. **Telegram envía webhook** POST a `/webhook` en Railway
+2. **Telegram envía webhook** POST a `/webhook` en Render
 3. **Sistema de cola** encola el mensaje (deduplicación por update_id)
 4. **Procesador de webhook**:
    - Verifica chat_id autorizado
@@ -220,6 +249,12 @@ worldtourcoach-backend/
 - `garmin_sleep` — Sueño de Garmin
 - `aprendizaje_desviaciones` — Aprendizaje de desviaciones del plan
 
+### Tablas V10 (plan previsto / sustituciones) — ⚠️ PENDIENTES DE CREAR (infra, tarea de Manu):
+- `plan_previsto_diario` — Plan del día congelado (PK `(user_id, fecha)`; `decision`/`workout`/`training_need` JSONB, `tipo_previsto`, `duracion_prevista_min`, `tss_previsto`, `intensidad_prevista`, `es_calidad`, `fuente`, `estado`, `congelado_en`)
+- `registro_sustituciones` — Sustituciones aceptadas (`prevista_*`, `sustituta_*`, `tss_real`, `categoria`, `decision`, `motivo`, `training_need_congelado`; índice único parcial `(user_id, fecha) WHERE decision='aceptada'`)
+
+> Mientras no existan, `persistenciaPlan.js` degrada de forma segura (lecturas null, escrituras rechazadas). Detalle de columnas: `CHECKPOINT_V10.md` §5.2 y `SPEC_V10_F1.md` §5.
+
 ---
 
 ## 10. SERVICIOS EXTERNOS
@@ -228,7 +263,7 @@ worldtourcoach-backend/
 |---|---|---|
 | **Telegram** | Interfaz de usuario | TELEGRAM_TOKEN, CHAT_ID |
 | **Supabase** | Persistencia | SUPABASE_URL, SUPABASE_ANON_KEY |
-| **Railway** | Despliegue | railway.json |
+| **Render** | Despliegue real (proceso Node persistente; `RENDER_EXTERNAL_URL` en index.js) | railway.json es configuración heredada NO vigente |
 | **Garmin** | Datos de salud | Via Supabase (garmin_wellness) |
 | **Intervals.icu** | Datos de entrenamiento | INTERVALS_API_KEY, ATHLETE_ID |
 | **OpenRouter** | IA | OPENROUTER_API_KEY |
@@ -306,7 +341,7 @@ index.js (crítico - TODO el sistema)
 
 ## 14. RIESGOS
 
-1. **index.js es monolítico** (6683 líneas) — Cualquier cambio puede afectar a todo
+1. **index.js es monolítico** (~8.603 líneas) — Cualquier cambio puede afectar a todo
 2. **Dependencia de APIs externas** — Si Intervals.icu o Garmin fallan, el sistema usa fallbacks
 3. **Variables de entorno** — Si faltan, el sistema no funciona
 4. **Cola de mensajes en memoria** — Se pierde si el servidor se reinicia
@@ -326,10 +361,10 @@ index.js (crítico - TODO el sistema)
 
 ### Debilidades
 - **Monolito**: index.js es demasiado grande
-- **Sin tests**: No hay tests automatizados
+- **Tests**: 11 suites / **130/130 verdes** (05/09/2026) — sin framework, `assert` nativo en `tests/` (gate, TN, SE, persistencia, P2/P2B, cumplimiento, calor indoor). Cobertura parcial: el pipeline núcleo y los comandos Telegram no tienen tests E2E
 - **Sin TypeScript**: JavaScript sin tipos
 - **Documentación limitada**: README básico
-- **Sin CI/CD**: Despliegue manual via Railway
+- **Sin CI/CD**: Despliegue manual via Render
 
 ### Deuda técnica
 - Código duplicado en varios comandos
@@ -342,7 +377,7 @@ index.js (crítico - TODO el sistema)
 
 ### 🔴 Críticas
 1. **Dividir index.js en módulos** — Beneficio: mantenibilidad. Dificultad: alta. Riesgo: alto. Módulos: todos.
-2. **Añadir tests** — Beneficio: estabilidad. Dificultad: media. Riesgo: bajo. Módulos: todos.
+2. ~~**Añadir tests**~~ — ✅ HECHO (05/09/2026): 11 suites / 130/130. Queda ampliar cobertura al pipeline núcleo y comandos.
 3. **Persistencia de cola de mensajes** — Beneficio: no perder mensajes. Dificultad: media. Riesgo: bajo. Módulos: webhook.
 
 ### 🟠 Importantes
@@ -408,7 +443,7 @@ La IA debe adaptar los entrenamientos a la disponibilidad real. **Nunca debe pro
 
 ### 7. ¿Cuál es la historia del proyecto?
 
-World Tour Coach nació con la idea de crear un entrenador personal inteligente basado en datos reales. No busca ser un simple bot de respuestas. Busca analizar: entrenamientos, recuperación, carga, nutrición, fatiga, rendimiento y contexto personal. El proyecto ha evolucionado añadiendo: Telegram, Node.js, Supabase, Railway, IA, Garmin, Intervals, análisis deportivo, nutrición, periodización y predicción. **La filosofía principal es mejorar continuamente sin destruir lo que ya funciona.**
+World Tour Coach nació con la idea de crear un entrenador personal inteligente basado en datos reales. No busca ser un simple bot de respuestas. Busca analizar: entrenamientos, recuperación, carga, nutrición, fatiga, rendimiento y contexto personal. El proyecto ha evolucionado añadiendo: Telegram, Node.js, Supabase, Render, IA, Garmin, Intervals, análisis deportivo, nutrición, periodización, predicción y (V10) gate de seguridad, Training Need, Substitution Engine y persistencia del plan previsto. **La filosofía principal es mejorar continuamente sin destruir lo que ya funciona.**
 
 ### 8. ¿Hay limitaciones físicas?
 
