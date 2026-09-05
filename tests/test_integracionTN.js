@@ -30,7 +30,10 @@ function test(nombre, fn) {
 }
 
 // ─── EXTRAER CÓDIGO REAL DE index.js ───────────────────────────
-const srcIndex = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+// Normalizar CRLF→LF: index.js puede estar guardado con saltos de línea de
+// Windows (CRLF); los patrones multi-línea con '\n' solo matchean si el
+// contenido se normaliza a LF antes de buscar (I7).
+const srcIndex = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
 
 // formatDate REAL (index.js ~807)
 const mFmt = srcIndex.match(/function formatDate\(d\) \{[\s\S]*?\n\}/);

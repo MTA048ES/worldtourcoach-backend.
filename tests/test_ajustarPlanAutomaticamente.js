@@ -118,9 +118,19 @@ test('M3. Sin datos suficientes (historial < 5): devuelve el MISMO objeto sin mu
 
 // ─── M4. OTRA RAMA DE MUTACIÓN (imposibilidad): original intacto ───
 test('M4. Rama "imposibilidad": la copia se reduce (durMin*0.7) y la original queda intacta', () => {
+  // Fecha de fixture = MAÑANA (hora local): su día de la semana NUNCA coincide
+  // con el de hoy, así la rama 'patron_dia' de ajustarPlanAutomaticamente()
+  // (desviacionesPorDia[hoy]) no puede dispararse. Resultado determinista
+  // cualquier día de la semana que se ejecute el test (regresión M4).
+  const manana = new Date();
+  manana.setDate(manana.getDate() + 1);
+  const yyyy = manana.getFullYear();
+  const mm = String(manana.getMonth() + 1).padStart(2, '0');
+  const dd = String(manana.getDate()).padStart(2, '0');
+  const fechaImposibilidad = `${yyyy}-${mm}-${dd}T10:00:00`;
   const aprendizajesImposibilidad = Array.from({ length: 8 }, () => ({
     categoria: 'imposibilidad',
-    desviacion: { planTipo: 'vo2', fecha: '2026-08-01T10:00:00Z' }
+    desviacion: { planTipo: 'vo2', fecha: fechaImposibilidad }
   }));
   const ajustar = crearAjustarPlan(historialVo2, aprendizajesImposibilidad);
   const decision = { tipo: 'vo2', reps: 5, durMin: 60, recSec: 120, intensidad: 0.95, motivo: 'Plan | VO2max' };
