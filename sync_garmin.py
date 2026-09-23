@@ -57,6 +57,8 @@ from garmin_to_supabase import (
     build_wellness_rows,
     build_hrv_rows,
     build_sleep_rows,
+    build_sleep_analysis_rows,
+    build_sleep_series_rows,
     build_activity_rows,
     supabase_upsert,
 )
@@ -201,6 +203,8 @@ def sync_data(garmin, start_date: str, end_date: str):
     wellness_rows = build_wellness_rows(steps, hr, stress, body, hrv, resp, spo2, sleep)
     hrv_rows = build_hrv_rows(hrv)
     sleep_rows = build_sleep_rows(sleep)
+    sleep_analysis_rows = build_sleep_analysis_rows(sleep)
+    sleep_series_rows = build_sleep_series_rows(sleep)
     activity_rows = build_activity_rows(activities)
 
         # --- Subir a Supabase con UPSERT EXISTENTE ---
@@ -239,6 +243,22 @@ def sync_data(garmin, start_date: str, end_date: str):
         upsert_results.append(("garmin_activities", err))
     else:
         upsert_results.append(("garmin_activities", None))
+
+    print("  garmin_sleep_analysis...")
+    ok, err = supabase_upsert("garmin_sleep_analysis", sleep_analysis_rows, start_date, end_date)
+    if not ok:
+        print(f"    [ERROR] {err}")
+        upsert_results.append(("garmin_sleep_analysis", err))
+    else:
+        upsert_results.append(("garmin_sleep_analysis", None))
+
+    print("  garmin_sleep_series...")
+    ok, err = supabase_upsert("garmin_sleep_series", sleep_series_rows, start_date, end_date)
+    if not ok:
+        print(f"    [ERROR] {err}")
+        upsert_results.append(("garmin_sleep_series", err))
+    else:
+        upsert_results.append(("garmin_sleep_series", None))
 
     # Si cualquier UPSERT falló, la sincronización se considera fallida
     failed = [(table, err) for table, err in upsert_results if err is not None]
