@@ -9,6 +9,8 @@ Usa las mismas tablas que el SQL de crear_tablas.sql:
 - garmin_wellness: datos diarios de salud
 - garmin_hrv: HRV detallado
 - garmin_sleep: sueño detallado
+- garmin_sleep_analysis: métricas derivadas del RAW de sueño (1 fila por noche)
+- garmin_sleep_series: series temporales del RAW de sueño (1 fila por muestra)
 - garmin_activities: actividades
 """
 
@@ -17,7 +19,7 @@ import json
 import sys
 import argparse
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Configurar salida UTF-8
@@ -118,6 +120,41 @@ def _extract_date(value):
         return datetime.utcfromtimestamp(epoch_ms / 1000.0).strftime("%Y-%m-%d")
     except (ValueError, TypeError, OSError):
         return None
+# Tamaño maximo (bytes) del JSON de cada POST de upsert. garmin_sleep_series genera
+# miles de filas por ejecucion (una ventana de 7 dias supera el limite del cuerpo HTTP),
+# de modo que se envian varios POST con la MISMA semantica de upsert.
+MAX_POST_BYTES = 700000
+
+
+def post_batches(rows, max_bytes=MAX_POST_BYTES):
+    """
+    Agrupa filas en lotes listos para el POST de upsert.
+
+    Cada lote cumple dos condiciones:
+      - todas sus filas tienen EXACTAMENTE las mismas claves. PostgREST construye un
+        unico INSERT con una lista de columnas comun, asi que las filas que ahora
+        omiten claves sin dato (para no sobrescribir con NULL) deben ir en lotes
+        separados segun su conjunto de claves;
+      - el JSON del lote no supera max_bytes (siempre al menos 1 fila por lote).
+    """
+    batch = []
+    batch_keys = None
+    used = 2  # corchetes del array JSON
+    for row in rows:
+        keys = tuple(sorted(row.keys()))
+        size = len(json.dumps(row, default=str, ensure_ascii=False)) + 1
+        if batch and (keys != batch_keys or used + size > max_bytes):
+            yield batch
+            batch = []
+            used = 2
+        if not batch:
+            batch_keys = keys
+        batch.append(row)
+        used += size
+    if batch:
+        yield batch
+
+
 def supabase_upsert(table: str, rows: list, requested_start_date: str = None, requested_end_date: str = None):
     """
     Sube datos a Supabase con upsert. Si POST falla por duplicados (409), usa PATCH.
@@ -178,13 +215,18 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
 
     # Proceder con el UPSERT solo para filas válidas.
     # El target del conflicto debe ser la UNIQUE constraint real de cada tabla:
-    #   - garmin_wellness/garmin_hrv/garmin_sleep -> UNIQUE(user_id, date)
-    #   - garmin_activities                       -> UNIQUE(activity_id)
+    #   - garmin_wellness/garmin_hrv/garmin_sleep/garmin_sleep_analysis
+    #       -> UNIQUE(user_id, date)
+    #   - garmin_activities -> UNIQUE(activity_id)
+    #   - garmin_sleep_series
+    #       -> UNIQUE(user_id, date, metric, timestamp_ms, ordinal)
     # Sin este parámetro, PostgREST usa la PK (id BIGSERIAL) como target por defecto,
     # pero esa columna no viaja en el payload y los lotes mixtos fallan con HTTP 409.
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     if table == "garmin_activities":
         post_url = f"{url}?on_conflict=activity_id"
+    elif table == "garmin_sleep_series":
+        post_url = f"{url}?on_conflict=user_id,date,metric,timestamp_ms,ordinal"
     else:
         post_url = f"{url}?on_conflict=user_id,date"
     headers = {
@@ -194,19 +236,29 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
         "Prefer": "resolution=merge-duplicates,return=minimal"
     }
 
-    # Primero intentar POST con upsert
-    try:
-        resp = requests.post(post_url, headers=headers, json=valid_rows, timeout=30)
+    # UPSERT por lotes: se envian varios POST con las mismas claves y acotados en
+    # tamano (ver post_batches). La semantica es la de siempre
+    # (Prefer: resolution=merge-duplicates + on_conflict); solo cambia el numero de
+    # peticiones.
+    conflict_rows = []
+    for batch in post_batches(valid_rows):
+        try:
+            resp = requests.post(post_url, headers=headers, json=batch, timeout=30)
+        except Exception as e:
+            print(f"    [ERROR] Conexion Supabase: {e}")
+            return False, str(e)
+
         if resp.status_code < 400:
-            print(f"    [OK] {len(valid_rows)} filas procesadas mediante UPSERT en {table}")
-            return True, None
+            print(f"    [OK] {len(batch)} filas procesadas mediante UPSERT en {table}")
+            continue
         if resp.status_code != 409:
             print(f"    [ERROR] {resp.status_code}: {resp.text[:200]}")
             return False, resp.text
-        # 409 = conflictos de duplicados -> usar PATCH por fila
-    except Exception as e:
-        print(f"    [ERROR] Conexion Supabase: {e}")
-        return False, str(e)
+        # 409 = conflictos de duplicados -> PATCH por fila (solo este lote)
+        conflict_rows.extend(batch)
+
+    if not conflict_rows:
+        return True, None
 
     # PATCH por fila (fallback cuando ya existen).
     # Con 'Prefer: return=representation' podemos distinguir si PostgREST
@@ -214,10 +266,16 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
     updated = 0
     not_found = 0
     errors = 0
-    for row in valid_rows:
+    for row in conflict_rows:
         # Construir filtro segun la clave unica de cada tabla
         if table == "garmin_activities":
             filters = f"activity_id=eq.{row['activity_id']}"
+        elif table == "garmin_sleep_series":
+            filters = (f"user_id=eq.{row['user_id']}&date=eq.{row['date']}"
+                       f"&metric=eq.{row['metric']}")
+            ts = row.get("timestamp_ms")
+            filters += f"&timestamp_ms=eq.{ts}" if ts is not None else "&timestamp_ms=is.null"
+            filters += f"&ordinal=eq.{row['ordinal']}"
         else:
             filters = f"user_id=eq.{row['user_id']}&date=eq.{row['date']}"
         patch_url = f"{url}?{filters}"
@@ -300,6 +358,413 @@ def get_sleep_score(sleep_dto):
     scores = sleep_dto.get("sleepScores") if isinstance(sleep_dto.get("sleepScores"), dict) else {}
     overall = scores.get("overall") if isinstance(scores.get("overall"), dict) else {}
     return safe_int(overall.get("value"))
+
+# --- Utilidades de sueno/series (garmin_sleep_analysis / garmin_sleep_series) ---
+# Funciones puras respecto a la red: reciben el item RAW ya descargado y
+# devuelven filas listas para UPSERT. No inventan datos: si una serie o campo
+# no existe, la metrica queda ausente/NULL.
+
+_SLEEP_SERIES_METRICS = (
+    "sleepHeartRate",
+    "sleepStress",
+    "sleepBodyBattery",
+    "sleepMovement",
+    "sleepLevels",
+    "wellnessEpochRespirationDataDTOList",
+    "wellnessEpochSPO2DataDTOList",
+    "breathingDisruptionData",
+    "sleepRestlessMoments",
+)
+
+# Claves candidatas de inicio/fin por muestra (se prueban en orden).
+_SERIES_START_KEYS = ("startGMT", "startTimeGMT", "epochTimestamp", "timestampGMT")
+_SERIES_END_KEYS = ("endGMT", "endTimeGMT", "epochEndTimestampGmt", "endTimestampGMT")
+
+# Clave de valor por metrica.
+_SERIES_VALUE_KEYS = {
+    "sleepHeartRate": ("value",),
+    "sleepStress": ("value",),
+    "sleepBodyBattery": ("value",),
+    "sleepMovement": ("activityLevel",),
+    "sleepLevels": ("activityLevel",),
+    "wellnessEpochRespirationDataDTOList": ("respirationValue",),
+    "wellnessEpochSPO2DataDTOList": ("spo2Reading",),
+    "breathingDisruptionData": ("value",),
+    "sleepRestlessMoments": ("value",),
+}
+
+# Criterio documentado: estres alto = nivel >= 75 (escala Garmin 0-100).
+# stress_high_minutes se calcula como minutos equivalentes: cada muestra de
+# sleepStress representa el intervalo hasta la siguiente muestra
+# (diferencia de startGMT en ms); la ultima usa la mediana de los
+# intervalos (180000 ms en el RAW observado). Solo pondera la fraccion
+# del intervalo cuyo nivel inicial es >= 75.
+STRESS_HIGH_THRESHOLD = 75
+
+# Criterio documentado: SpO2 baja = lectura < 95. Cada muestra de
+# wellnessEpochSPO2DataDTOList dura epochDuration segundos (60s en el RAW
+# observado). spo2_below_95_minutes = segundos_bajo_95 / 60.
+SPO2_LOW_THRESHOLD = 95
+
+# NOTA sleepLevels: activityLevel es un codigo numerico de fase no
+# documentado por Garmin en este payload (observado: 0.0/1.0/2.0/3.0). NO se
+# interpreta fase concreta: las transiciones se cuentan como cambios de valor
+# de activityLevel y deep/rem/light/awake se toman del DTO (segundos reales).
+
+# --- Fin utilidades de sueno/series ---
+
+
+def set_if_value(row, key, value):
+    """
+    Asigna la clave solo si hay dato real (no None y no cadena vacia).
+
+    Motivo: en el UPSERT (Prefer: resolution=merge-duplicates) las columnas que
+    viajan en el payload se sobrescriben. Si enviamos null en una columna que no
+    tiene dato, destruimos un valor valido ya existente en Supabase. Las claves sin
+    dato simplemente NO viajan en el payload.
+    """
+    if value is None or value == "":
+        return
+    row[key] = value
+
+
+def as_dict(value):
+    """Devuelve value si es dict, o {} en caso contrario."""
+    return value if isinstance(value, dict) else {}
+
+
+def get_biometric_date(item, dto):
+    """Fecha YYYY-MM-DD de un item biometrico (sleep/HRV).
+
+    Orden: calendarDate inyectado en el wrapper, calendarDate del DTO/summary.
+    """
+    for cand in (item.get("calendarDate"), dto.get("calendarDate")):
+        if isinstance(cand, str) and len(cand) >= 10 and cand[4] == "-" and cand[7] == "-":
+            try:
+                datetime.strptime(cand[0:10], "%Y-%m-%d")
+                return cand[0:10]
+            except ValueError:
+                pass
+    return None
+
+
+def _epoch_ms_to_iso(ts):
+    """Convierte epoch en milisegundos a ISO-8601 UTC con 'Z' (o None)."""
+    if ts is None or isinstance(ts, bool):
+        return None
+    try:
+        n = float(ts)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    if n < 1e12:
+        n = n * 1000.0
+    sec, ms = divmod(int(n), 1000)
+    try:
+        dt = datetime.fromtimestamp(sec, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    base = dt.strftime("%Y-%m-%dT%H:%M:%S")
+    return base + (".%03dZ" % ms if ms else "Z")
+
+
+def _parse_series_ts(value):
+    if value is None or isinstance(value, bool):
+        return None, None
+    if isinstance(value, (int, float)):
+        if value <= 0:
+            return None, None
+        ms = int(value) if value >= 1e12 else int(value * 1000)
+        return ms, _epoch_ms_to_iso(ms)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None, None
+        if s.lstrip("-").replace(".", "", 1).isdigit():
+            try:
+                n = float(s)
+            except ValueError:
+                return None, None
+            if n <= 0:
+                return None, None
+            ms = int(n) if n >= 1e12 else int(n * 1000)
+            return ms, _epoch_ms_to_iso(ms)
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError:
+            return None, None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(timezone.utc)
+        ms = int(dt.timestamp() * 1000)
+        frac = ".%03dZ" % (ms % 1000) if ms % 1000 else "Z"
+        return ms, dt.strftime("%Y-%m-%dT%H:%M:%S") + frac
+    return None, None
+
+
+def _sample_value(sample, value_keys):
+    for k in value_keys:
+        v = sample.get(k)
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _series_values(items, value_keys):
+    vals = []
+    for s in items or []:
+        if not isinstance(s, dict):
+            continue
+        v = _sample_value(s, value_keys)
+        if v is None or v < 0:
+            continue
+        vals.append(v)
+    return vals
+
+
+def _stats(vals):
+    if not vals:
+        return None, None, None
+    return sum(vals) / len(vals), min(vals), max(vals)
+
+
+def _parse_sleep_item(sleep_item):
+    item = as_dict(sleep_item)
+    dto = as_dict(item.get("dailySleepDTO"))
+    date = get_biometric_date(item, dto)
+    return date, item, dto
+
+
+def _series_items(item, metric):
+    v = item.get(metric)
+    if not isinstance(v, list):
+        return []
+    return [s for s in v if isinstance(s, dict)]
+
+
+def _sleep_level_transitions(items):
+    prev = None
+    n = 0
+    for s in items:
+        v = s.get("activityLevel")
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if prev is not None and f != prev:
+            n += 1
+        prev = f
+    return n
+
+
+def _stress_high_minutes(st_items):
+    if not st_items:
+        return None
+    ts = []
+    for s in st_items:
+        v = _sample_value(s, ("value",))
+        if v is None or v < 0:
+            continue
+        ms, _iso = _parse_series_ts(s.get("startGMT"))
+        if ms is None:
+            return None
+        ts.append((ms, v))
+    if not ts:
+        return None
+    ts.sort(key=lambda t: t[0])
+    gaps = [b[0] - a[0] for a, b in zip(ts, ts[1:]) if b[0] > a[0]]
+    last_gap = sorted(gaps)[len(gaps) // 2] if gaps else 180000
+    total_ms = 0
+    for i, (ms, f) in enumerate(ts):
+        gap = (ts[i + 1][0] - ms) if i + 1 < len(ts) else last_gap
+        if gap <= 0:
+            continue
+        if f >= STRESS_HIGH_THRESHOLD:
+            total_ms += gap
+    return total_ms / 60000.0
+
+
+def _spo2_below_95_minutes(spo2_items):
+    if not spo2_items:
+        return None
+    total_s = 0.0
+    n = 0
+    for s in spo2_items:
+        v = _sample_value(s, ("spo2Reading",))
+        if v is None or v < 0:
+            continue
+        n += 1
+        dur = s.get("epochDuration")
+        try:
+            dur_s = float(dur) if dur is not None else 60.0
+        except (TypeError, ValueError):
+            dur_s = 60.0
+        if dur_s <= 0:
+            dur_s = 60.0
+        if v < SPO2_LOW_THRESHOLD:
+            total_s += dur_s
+    if not n:
+        return None
+    return total_s / 60.0
+
+
+def build_sleep_analysis_rows(sleep_data):
+    rows = []
+    for sleep in sleep_data or []:
+        date, item, dto = _parse_sleep_item(sleep)
+        if not date:
+            continue
+        duration = safe_int(dto.get("sleepTimeSeconds"))
+        deep_s = safe_int(dto.get("deepSleepSeconds"))
+        light_s = safe_int(dto.get("lightSleepSeconds"))
+        rem_s = safe_int(dto.get("remSleepSeconds"))
+        awake_s = safe_int(dto.get("awakeSleepSeconds"))
+        score = get_sleep_score(dto)
+        has_dto = any(v is not None for v in (duration, deep_s, light_s, rem_s, awake_s, score))
+        has_series = any(_series_items(item, m) for m in _SLEEP_SERIES_METRICS)
+        if not has_dto and not has_series:
+            continue
+        hr_vals = _series_values(_series_items(item, "sleepHeartRate"), ("value",))
+        hr_mean, hr_min, hr_max = _stats(hr_vals)
+        st_items = _series_items(item, "sleepStress")
+        st_vals = _series_values(st_items, ("value",))
+        st_mean, st_min, st_max = _stats(st_vals)
+        st_high_min = _stress_high_minutes(st_items)
+        bb_vals = _series_values(_series_items(item, "sleepBodyBattery"), ("value",))
+        bb_start = bb_vals[0] if bb_vals else None
+        bb_min = min(bb_vals) if bb_vals else None
+        bb_end = bb_vals[-1] if bb_vals else None
+        bb_rec = (bb_end - bb_start) if (bb_start is not None and bb_end is not None) else None
+        mv_vals = _series_values(_series_items(item, "sleepMovement"), ("activityLevel",))
+        mv_mean, _a, _b = _stats(mv_vals)
+        resp_items = _series_items(item, "wellnessEpochRespirationDataDTOList")
+        resp_vals = _series_values(resp_items, ("respirationValue",))
+        resp_mean, resp_min, resp_max = _stats(resp_vals)
+        spo2_items = _series_items(item, "wellnessEpochSPO2DataDTOList")
+        spo2_vals = _series_values(spo2_items, ("spo2Reading",))
+        spo2_mean, spo2_min, _c = _stats(spo2_vals)
+        spo2_below = _spo2_below_95_minutes(spo2_items)
+        breath_items = _series_items(item, "breathingDisruptionData")
+        breath_events = None
+        if breath_items:
+            breath_events = sum(1 for s in breath_items if _sample_value(s, ("value",)) is not None)
+        restless_n = safe_int(item.get("restlessMomentsCount"))
+        if restless_n is None:
+            restless_items = _series_items(item, "sleepRestlessMoments")
+            if restless_items:
+                restless_n = sum(1 for s in restless_items if _sample_value(s, ("value",)) is not None)
+        levels_items = _series_items(item, "sleepLevels")
+        transitions = _sleep_level_transitions(levels_items) if levels_items else None
+        row = {"user_id": USER_ID, "date": date}
+        set_if_value(row, "sleep_start_gmt", _epoch_ms_to_iso(dto.get("sleepStartTimestampGMT")))
+        set_if_value(row, "sleep_end_gmt", _epoch_ms_to_iso(dto.get("sleepEndTimestampGMT")))
+        set_if_value(row, "sleep_duration_seconds", duration)
+        set_if_value(row, "deep_sleep_seconds", deep_s)
+        set_if_value(row, "light_sleep_seconds", light_s)
+        set_if_value(row, "rem_sleep_seconds", rem_s)
+        set_if_value(row, "awake_sleep_seconds", awake_s)
+        set_if_value(row, "sleep_score", score)
+        set_if_value(row, "resting_hr", safe_int(item.get("restingHeartRate")))
+        set_if_value(row, "avg_overnight_hrv", safe_num(item.get("avgOvernightHrv")))
+        set_if_value(row, "hrv_status", item.get("hrvStatus"))
+        set_if_value(row, "hr_mean", hr_mean)
+        set_if_value(row, "hr_min", safe_int(hr_min))
+        set_if_value(row, "hr_max", safe_int(hr_max))
+        set_if_value(row, "stress_mean", st_mean)
+        set_if_value(row, "stress_min", safe_int(st_min))
+        set_if_value(row, "stress_max", safe_int(st_max))
+        set_if_value(row, "stress_high_minutes", st_high_min)
+        set_if_value(row, "movement_mean", mv_mean)
+        set_if_value(row, "movement_total", sum(mv_vals) if mv_vals else None)
+        set_if_value(row, "movement_samples", len(mv_vals) if mv_vals else None)
+        set_if_value(row, "restless_moments", restless_n)
+        set_if_value(row, "body_battery_start", bb_start)
+        set_if_value(row, "body_battery_min", bb_min)
+        set_if_value(row, "body_battery_end", bb_end)
+        set_if_value(row, "body_battery_recovery", bb_rec)
+        set_if_value(row, "respiration_mean", resp_mean)
+        set_if_value(row, "respiration_min", resp_min)
+        set_if_value(row, "respiration_max", resp_max)
+        set_if_value(row, "respiration_samples", len(resp_vals) if resp_vals else None)
+        set_if_value(row, "spo2_mean", spo2_mean)
+        set_if_value(row, "spo2_min", spo2_min)
+        set_if_value(row, "spo2_below_95_minutes", spo2_below)
+        set_if_value(row, "spo2_samples", len(spo2_vals) if spo2_vals else None)
+        set_if_value(row, "breathing_disruption_events", breath_events)
+        skin_c = item.get("avgSkinTempDeviationC")
+        if skin_c is None:
+            skin_c = dto.get("avgSkinTempDeviationC")
+        set_if_value(row, "skin_temp_deviation_c", safe_num(skin_c))
+        set_if_value(row, "sleep_level_transitions", transitions)
+        if duration and duration > 0:
+            set_if_value(row, "deep_percentage", (deep_s / duration * 100.0) if deep_s is not None else None)
+            set_if_value(row, "rem_percentage", (rem_s / duration * 100.0) if rem_s is not None else None)
+        set_if_value(row, "source_raw_keys", sorted([k for k in _SLEEP_SERIES_METRICS if _series_items(item, k)]))
+        rows.append(row)
+    return rows
+
+
+def build_sleep_series_rows(sleep_data):
+    rows = []
+    for sleep in sleep_data or []:
+        date, item, _dto = _parse_sleep_item(sleep)
+        if not date:
+            continue
+        for metric in _SLEEP_SERIES_METRICS:
+            items = _series_items(item, metric)
+            if not items:
+                continue
+            value_keys = _SERIES_VALUE_KEYS.get(metric, ("value",))
+            for ordinal, s in enumerate(items):
+                start_raw = None
+                for k in _SERIES_START_KEYS:
+                    if s.get(k) is not None:
+                        start_raw = s.get(k)
+                        break
+                ts_ms, ts_iso = _parse_series_ts(start_raw)
+                end_raw = None
+                for k in _SERIES_END_KEYS:
+                    if s.get(k) is not None:
+                        end_raw = s.get(k)
+                        break
+                dur_s = None
+                if end_raw is not None and ts_ms is not None:
+                    end_ms, _eiso = _parse_series_ts(end_raw)
+                    if end_ms is not None and end_ms >= ts_ms:
+                        dur_s = (end_ms - ts_ms) / 1000.0
+                value = _sample_value(s, value_keys)
+                row = {"user_id": USER_ID, "date": date, "metric": metric, "ordinal": ordinal, "source_key": metric}
+                set_if_value(row, "timestamp_ms", ts_ms)
+                set_if_value(row, "timestamp_gmt", ts_iso)
+                set_if_value(row, "duration_seconds", dur_s)
+                set_if_value(row, "value", value)
+                if metric == "wellnessEpochSPO2DataDTOList":
+                    set_if_value(row, "confidence", safe_int(s.get("readingConfidence")))
+                try:
+                    row["raw_sample"] = json.dumps(s, ensure_ascii=False, default=str)
+                except (TypeError, ValueError):
+                    continue
+                rows.append(row)
+    return rows
+
+
+
+
+# Formatos de fecha/hora que devuelve Garmin en las actividades.
+_ACTIVITY_DT_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S.%f",
+)
+
 
 def build_wellness_rows(steps, hr, stress, body, hrv, resp, spo2, sleep):
     """Combina datos de multiples fuentes en filas de garmin_wellness."""
@@ -699,6 +1164,18 @@ def main():
     print("  garmin_sleep...")
     sleep_rows = build_sleep_rows(sleep)
     ok, err = supabase_upsert("garmin_sleep", sleep_rows, START_DATE, END_DATE)
+    if not ok:
+        print(f"    [WARN] {err}")
+
+    print("  garmin_sleep_analysis...")
+    analysis_rows = build_sleep_analysis_rows(sleep)
+    ok, err = supabase_upsert("garmin_sleep_analysis", analysis_rows, START_DATE, END_DATE)
+    if not ok:
+        print(f"    [WARN] {err}")
+
+    print("  garmin_sleep_series...")
+    series_rows = build_sleep_series_rows(sleep)
+    ok, err = supabase_upsert("garmin_sleep_series", series_rows, START_DATE, END_DATE)
     if not ok:
         print(f"    [WARN] {err}")
 
