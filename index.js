@@ -2,6 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const motorIntencion = require('./motorIntencion');
+const { esSecretoValido, esIdNumericoValido, compararSecreto, mensajeAutorizado, redactarUrl } = require('./lib/security');
+const { createActivityRepository } = require('./lib/activityRepository');
+const { createSegmentsService } = require('./lib/segmentsService');
+const { createIntervalsClient } = require('./lib/intervalsClient');
+const { createActivitiesSync } = require('./lib/activitiesSync');
+const { createAppApiRouter } = require('./lib/appApiRouter');
 require('dotenv').config({ path: 'ENV' });
 
 // ═══════════════════════════════════════════════════════════════
@@ -64,6 +70,8 @@ app.get('/ping', (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 const CONFIG = {
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
+  TELEGRAM_WEBHOOK_SECRET: process.env.TELEGRAM_WEBHOOK_SECRET,
+  AUTHORIZED_USER_ID: process.env.AUTHORIZED_USER_ID,
   CHAT_ID: process.env.CHAT_ID,
   // Identificador del atleta usado para leer datos Garmin de Supabase.
   // El script Python (garmin_to_supabase.py) escribe con USER_ID del .env.
@@ -72,6 +80,8 @@ const CONFIG = {
   ATHLETE_USER_ID: process.env.ATHLETE_USER_ID || process.env.USER_ID || '939585578',
   INTERVALS_API_KEY: process.env.INTERVALS_API_KEY,
   ATHLETE_ID: process.env.ATHLETE_ID,
+  // Token que la app móvil envía en Authorization: Bearer
+  APP_API_TOKEN: process.env.APP_API_TOKEN,
   WEATHER_API_KEY: process.env.WEATHER_API_KEY,
   CITY: 'Villargordo,ES',
   TIMEZONE: 'Europe/Madrid',
@@ -193,10 +203,26 @@ const performanceReferences = {
 };
 
 console.log('🔑 Telegram Token:', CONFIG.TELEGRAM_TOKEN ? '✅ Configurado' : '❌ FALTA');
-console.log('📱 CHAT_ID:', CONFIG.CHAT_ID || '❌ FALTA');
+console.log('📱 CHAT_ID:', CONFIG.CHAT_ID ? '✅ Configurado' : '❌ FALTA');
+console.log('🔐 Webhook secret:', CONFIG.TELEGRAM_WEBHOOK_SECRET ? '✅ Configurado' : '❌ FALTA');
+console.log('👤 Usuario autorizado:', CONFIG.AUTHORIZED_USER_ID ? '✅ Configurado' : '❌ FALTA');
 console.log('📊 FTP:', CONFIG.FTP, 'W');
 console.log('🌍 CIUDAD:', CONFIG.CITY);
 console.log('📅 FASE:', CONFIG.PERIODO.fase.toUpperCase(), '| Semana', CONFIG.PERIODO.semana);
+
+// ─── SEGURIDAD TELEGRAM (FAIL-CLOSED) ───
+// Si hay token, el bot sólo arranca con secreto de webhook y usuario autorizado válidos.
+// Los mensajes de error nunca incluyen valores de las variables.
+if (CONFIG.TELEGRAM_TOKEN) {
+  if (!esSecretoValido(CONFIG.TELEGRAM_WEBHOOK_SECRET)) {
+    console.error('❌ FATAL: TELEGRAM_WEBHOOK_SECRET falta o no es válido (1-256 caracteres A-Za-z0-9_-).');
+    process.exit(1);
+  }
+  if (!esIdNumericoValido(CONFIG.AUTHORIZED_USER_ID)) {
+    console.error('❌ FATAL: AUTHORIZED_USER_ID falta o no es un id numérico de Telegram.');
+    process.exit(1);
+  }
+}
 
 // ─── SUPABASE ───
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -206,6 +232,38 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   process.exit(1);
 }
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─── APP MÓVIL: ACTIVIDADES Y SEGMENTOS ─────────────────────
+// La app lee resultados ya calculados: nunca escribe en Supabase ni
+// conoce la clave de Intervals.icu. Si APP_API_TOKEN falta, el router
+// responde 503 (fail-closed) en lugar de quedar abierto.
+const APP_USER_ID = CONFIG.ATHLETE_USER_ID || CONFIG.CHAT_ID || 'default';
+const activityRepository = createActivityRepository({
+  supabase,
+  userId: APP_USER_ID,
+  logger: console.log
+});
+const segmentsService = createSegmentsService({
+  repository: activityRepository,
+  userId: APP_USER_ID,
+  logger: console.log
+});
+const intervalsClient = CONFIG.INTERVALS_API_KEY && CONFIG.ATHLETE_ID
+  ? createIntervalsClient({
+      apiKey: CONFIG.INTERVALS_API_KEY,
+      athleteId: CONFIG.ATHLETE_ID,
+      logger: console.log
+    })
+  : null;
+const activitiesSync = intervalsClient
+  ? createActivitiesSync({
+      repository: activityRepository,
+      segmentsService,
+      intervals: intervalsClient,
+      userId: APP_USER_ID,
+      logger: console.log
+    })
+  : null;
 
 // ═══════════════════════════════════════════════════════════════
 // 📊 SUPABASE - PERSISTENCIA DE DATOS
@@ -844,7 +902,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      throw new Error(`Timeout (${timeoutMs}ms) en ${url.substring(0, 50)}...`);
+      throw new Error(`Timeout (${timeoutMs}ms) en ${redactarUrl(url)}`);
     }
     throw err;
   }
@@ -1331,8 +1389,9 @@ async function sendTelegram(text) {
     return { success: true };
     
   } catch(e) {
-    console.log('[sendTelegram] ❌ ERROR de red:', e.toString());
-    return { success: false, error: e.toString() };
+    const detalle = redactarUrl(e && e.message ? e.message : String(e));
+    console.log('[sendTelegram] ❌ ERROR de red:', detalle);
+    return { success: false, error: detalle };
   }
 }
 
@@ -7557,9 +7616,9 @@ async function procesarSiguienteMensaje() {
   try {
     await procesarWebhook(body, res);
   } catch (err) {
-    console.log('[Cola] ERROR:', err);
+    console.error('[Cola] ERROR:', redactarUrl(err && err.message ? err.message : String(err)));
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok: false });
     }
   } finally {
     procesandoMensaje = false;
@@ -7593,6 +7652,14 @@ function encolarMensaje(body, res) {
 
 app.post('/webhook', async (req, res) => {
   try {
+    // ─── AUTENTICIDAD DEL ORIGEN (Telegram secret_token) ─────────
+    // Se valida antes de encolar: sin secreto válido no hay cola ni acciones.
+    const secretoRecibido = req.get('X-Telegram-Bot-Api-Secret-Token');
+    if (!compararSecreto(secretoRecibido, CONFIG.TELEGRAM_WEBHOOK_SECRET)) {
+      console.log('[Webhook] ⛔ Petición rechazada: secreto ausente o incorrecto');
+      return res.status(401).json({ ok: false });
+    }
+
     const body = req.body;
     
     // ─── USAR SISTEMA DE COLA ────────────────────────────────────
@@ -7604,23 +7671,27 @@ app.post('/webhook', async (req, res) => {
     // No continuar aquí - el procesamiento se hace en procesarSiguienteMensaje()
     return;
   } catch (err) {
-    console.log('[Webhook] ERROR:', err);
+    console.error('[Webhook] ERROR:', redactarUrl(err && err.message ? err.message : String(err)));
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok: false });
     }
   }
 });
 
 async function procesarWebhook(body, res) {
   try {
-    const message = body.message || body.edited_message || body.channel_post;
+    // Sólo mensajes de usuario en chat privado: canales y grupos quedan fuera.
+    const message = body.message || body.edited_message;
     if (!message) return res.status(200).json({ ok: true });
-    if (message.from && message.from.is_bot) return res.status(200).json({ ok: true });
 
-    const chatId = (message.chat && message.chat.id) ? message.chat.id.toString() : '';
-    if (!chatId || chatId !== CONFIG.CHAT_ID.toString()) {
+    // Autorización por identidad (el secreto ya se validó en la ruta).
+    // No se confía en message.chat.id como credencial.
+    if (!mensajeAutorizado(message, CONFIG.AUTHORIZED_USER_ID)) {
+      console.log('[Webhook] ⛔ Update no autorizado: usuario o tipo de chat no permitido');
       return res.status(200).json({ ok: true });
     }
+
+    const chatId = (message.chat && message.chat.id) ? message.chat.id.toString() : '';
 
     const rawText = (message.text || '').trim();
     if (!rawText) return res.status(200).json({ ok: true });
@@ -7716,9 +7787,9 @@ async function procesarWebhook(body, res) {
 
     res.status(200).json({ ok: true });
   } catch (err) {
-    console.log('[Webhook] ERROR:', err);
+    console.error('[Webhook] ERROR:', redactarUrl(err && err.message ? err.message : String(err)));
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok: false });
     }
   }
 };
@@ -7730,7 +7801,7 @@ app.get('/api/estado', async (req, res) => {
     if (!state) return res.status(404).json({ success: false, error: 'No data' });
     res.json({ success: true, ...state });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Error interno' });
   }
 });
 
@@ -7752,7 +7823,7 @@ app.post('/api/comando', async (req, res) => {
     }
     res.json({ success: true, respuesta });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Error interno' });
   }
 });
 
@@ -7771,6 +7842,15 @@ app.get('/api/config', (req, res) => {
     }
   });
 });
+
+// ─── API DE LA APP (token obligatorio) ───
+app.use('/api/app', createAppApiRouter({
+  repository: activityRepository,
+  segmentsService,
+  activitiesSync,
+  token: CONFIG.APP_API_TOKEN,
+  logger: console.log
+}));
 
 // ─── MANEJO DE ERRORES ───
 app.use((req, res) => {
@@ -7791,10 +7871,9 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('❌ Error global:', err);
+  console.error('❌ Error global:', redactarUrl(err && err.message ? err.message : String(err)));
   res.status(500).json({
-    error: 'Error interno del servidor',
-    message: err.message
+    error: 'Error interno del servidor'
   });
 });
 
@@ -7802,6 +7881,13 @@ app.use((err, req, res, next) => {
 async function registrarWebhookTelegram() {
   if (!CONFIG.TELEGRAM_TOKEN) {
     console.log('[Webhook] ❌ No se puede registrar webhook: falta TELEGRAM_TOKEN');
+    return;
+  }
+
+  // Sin secreto válido no se llama a setWebhook: hacerlo sin secret_token
+  // borraría el secreto ya registrado en Telegram.
+  if (!esSecretoValido(CONFIG.TELEGRAM_WEBHOOK_SECRET)) {
+    console.log('[Webhook] ❌ No se registra el webhook: TELEGRAM_WEBHOOK_SECRET ausente o inválido (no se modifica el registro actual).');
     return;
   }
 
@@ -7816,8 +7902,10 @@ async function registrarWebhookTelegram() {
 
   if (!publicUrl) {
     console.log('[Webhook] ⚠️ No se detectó URL pública (RAILWAY_PUBLIC_DOMAIN, RENDER_EXTERNAL_URL o PUBLIC_URL).');
-    console.log('[Webhook] ⚠️ Configura manualmente con:');
-    console.log(`[Webhook]   curl "https://api.telegram.org/bot${CONFIG.TELEGRAM_TOKEN}/setWebhook?url=TU_URL/webhook"`);
+    console.log('[Webhook] ⚠️ Registra el webhook manualmente con setWebhook usando:');
+    console.log('[Webhook]    url = https://<TU_DOMINIO_PUBLICO>/webhook');
+    console.log('[Webhook]    secret_token = <valor de TELEGRAM_WEBHOOK_SECRET>');
+    console.log('[Webhook]    (ni el token del bot ni el secreto se muestran en los logs)');
     return;
   }
 
@@ -7833,7 +7921,8 @@ async function registrarWebhookTelegram() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: webhookUrl,
-        allowed_updates: ['message', 'edited_message', 'channel_post']
+        secret_token: CONFIG.TELEGRAM_WEBHOOK_SECRET,
+        allowed_updates: ['message', 'edited_message']
       })
     }, TIMEOUTS.TELEGRAM);
 
@@ -7846,7 +7935,7 @@ async function registrarWebhookTelegram() {
       console.log(`[Webhook] ❌ Error al registrar webhook: ${data.description || 'Desconocido'}`);
     }
   } catch (err) {
-    console.log(`[Webhook] ❌ Error de red al registrar webhook: ${err.message}`);
+    console.log(`[Webhook] ❌ Error de red al registrar webhook: ${redactarUrl(err && err.message ? err.message : String(err))}`);
   }
 }
 
@@ -7857,6 +7946,8 @@ app.listen(PORT, () => {
   console.log(`📡 Servidor corriendo en puerto ${PORT}`);
   console.log(`🔗 URL: http://localhost:${PORT}`);
   console.log(`🤖 Telegram Bot: ${CONFIG.TELEGRAM_TOKEN ? '✅ Configurado' : '⚠️ Sin token'}`);
+  console.log(`🔐 Webhook secret: ${CONFIG.TELEGRAM_WEBHOOK_SECRET ? '✅ Configurado' : '❌ FALTA'}`);
+  console.log(`👤 Usuario autorizado: ${CONFIG.AUTHORIZED_USER_ID ? '✅ Configurado' : '❌ FALTA'}`);
   console.log(`📊 FTP: ${CONFIG.FTP}W | Peso: ${CONFIG.WEIGHT_KG}kg`);
   console.log(`🎯 Objetivo: ${CONFIG.FTP_HISTORICO.valor}W`);
   console.log(`📅 Fase: ${getFaseActual().toUpperCase()} | Semana ${getSemanaActual()}`);

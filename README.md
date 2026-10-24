@@ -110,6 +110,10 @@ Sistema avanzado de entrenamiento de ciclismo con IA para Telegram. Periodizaci�
    # Telegram
    TELEGRAM_TOKEN=tu_token_de_telegram
    CHAT_ID=tu_chat_id
+
+   # Seguridad del webhook (obligatorias si TELEGRAM_TOKEN esta definido)
+   TELEGRAM_WEBHOOK_SECRET=tu_secreto_aleatorio
+   AUTHORIZED_USER_ID=tu_id_de_usuario_de_telegram
    
    # Intervals.icu
    INTERVALS_API_KEY=tu_api_key
@@ -130,6 +134,9 @@ Sistema avanzado de entrenamiento de ciclismo con IA para Telegram. Periodizaci�
    
    # OpenRouter AI (opcional)
    OPENROUTER_API_KEY=tu_key
+
+   # App móvil (token que la app envía para leer actividades y segmentos)
+   APP_API_TOKEN=un_token_largo_y_aleatorio
    ```
 
 4. **Inicia el servidor**:
@@ -161,7 +168,65 @@ Sistema avanzado de entrenamiento de ciclismo con IA para Telegram. Periodizaci�
    - `SUPABASE_URL` - URL de tu proyecto Supabase
    - `SUPABASE_ANON_KEY` - Key anónima de Supabase
    - `OPENROUTER_API_KEY` - (Opcional) API key de OpenRouter para IA
+   - `APP_API_TOKEN` - Token privado que usa la app móvil (sin él, `/api/app` responde 503)
 3. Deploy automático
+
+## 📱 App móvil: actividades y segmentos
+
+La app (`manu-app`) no habla con Intervals.icu ni con Supabase: lee resultados
+ya calculados desde este servidor. Así el móvil no guarda cientos de MB de
+actividades ni necesita la clave de Intervals.icu.
+
+### 1. Crear las tablas (una vez)
+
+Ejecuta [`crear_tablas_actividades_segmentos.sql`](crear_tablas_actividades_segmentos.sql)
+en el SQL Editor de Supabase.
+
+### 2. Configurar el token
+
+Añade `APP_API_TOKEN` en Railway (cadena larga y aleatoria). Sin esta variable
+el prefijo `/api/app` responde `503`; con ella, cada petición exige
+`Authorization: Bearer <token>`.
+
+### 3. Qué hace el servidor
+
+- **Sincronización** (`POST /api/app/sync`): descarga el historial desde
+  Intervals.icu por ventanas de fechas, guarda el resumen y la traza comprimida
+  (gzip + base64) y detecta las subidas. Es incremental: no repite descargas.
+  Procesa hasta 300 actividades nuevas por tanda y devuelve `hay_mas` para que
+  la app encadene otra si queda historial.
+- **Segmentos automáticos**: cada subida sostenida (ganancia ≥ 80 m, ≥ 500 m de
+  longitud y ≥ 2,5 % de pendiente) se agrupa por proximidad con las ya
+  conocidas, se clasifica (HC, 1–4) y genera un esfuerzo con tiempo, potencia
+  media, normalizada y FC media.
+- **Segmentos manuales** (`POST /api/app/segments`): salida y llegada elegidas
+  sobre el recorrido, con radio de 45 m. El recálculo sobre todo el historial
+  corre en segundo plano y el segmento pasa de `calculando` a `listo`.
+
+El sync descarga streams de Intervals.icu, así que respeta sus límites:
+5.000 peticiones/día, 2.500 por 15 minutos y 10/s por IP, con reintento ante
+`429`.
+
+### 4. Endpoints (`/api/app`, todos con token)
+
+| Método | Ruta | Uso |
+|---|---|---|
+| GET | `/health` | Actividades y segmentos guardados |
+| GET | `/activities?limit=&offset=` | Historial paginado |
+| GET | `/activities/:id` | Resumen de una actividad |
+| GET | `/activities/:id/track?max=` | Recorrido reducido con potencia y FC |
+| GET | `/segments` | Segmentos con mejor esfuerzo |
+| GET | `/segments/:id` | Clasificación completa |
+| POST | `/segments` | Crear segmento manual |
+| DELETE | `/segments/:id` | Borrar segmento |
+| POST | `/sync` | Lanzar sincronización |
+| GET | `/sync` | Estado de la sincronización |
+
+### 5. Pruebas
+
+```bash
+npm test        # node --test test/*.test.js
+```
 
 ## 🤖 OpenRouter AI (Opcional)
 
