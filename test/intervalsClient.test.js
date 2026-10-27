@@ -166,3 +166,29 @@ test('normalizeActivity conserva un cero real de potencia', () => {
 
   assert.equal(row.pot_media, 0);
 });
+
+test('normalizeActivity redondea las medias decimales para las columnas integer', () => {
+  const row = normalizeActivity({
+    id: 'i201414978',
+    start_date_local: '2026-10-25T10:41:32',
+    moving_time: 10853,
+    distance: 97928.4,
+    total_elevation_gain: 807.6,
+    icu_average_watts: 149.7,
+    icu_weighted_avg_watts: 194.3,
+    average_heartrate: 148.4,
+    max_heartrate: 181,
+    average_cadence: 79.04113,
+    average_speed: 9.027,
+    icu_training_load: 197.234,
+  });
+
+  assert.equal(row.distancia_m, 97928);
+  assert.equal(row.pot_media, 150);
+  assert.equal(row.np, 194);
+  assert.equal(row.fc_media, 148);
+  assert.equal(row.cadencia_media, 79);
+  // tss y velocidad son columnas real: conservan el decimal.
+  assert.equal(row.tss, 197.234);
+  assert.equal(row.velocidad_media, 9.027);
+});
