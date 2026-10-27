@@ -128,3 +128,41 @@ test('normalizeActivity descarta filas sin id o sin fecha válida', () => {
   assert.equal(normalizeActivity({ start_date_local: '2026-05-01' }), null);
   assert.equal(normalizeActivity({ id: 'i1', start_date_local: 'no-es-fecha' }), null);
 });
+
+test('normalizeActivity deja en null los datos ausentes (no los convierte en 0)', () => {
+  const row = normalizeActivity({
+    id: 'i200446051',
+    start_date_local: '2026-10-22T17:03:03',
+    type: 'Ride',
+    moving_time: 5835,
+    distance: 43521,
+  });
+
+  assert.equal(row.pot_media, null);
+  assert.equal(row.pot_max, null);
+  assert.equal(row.np, null);
+  assert.equal(row.fc_media, null);
+  assert.equal(row.fc_max, null);
+  assert.equal(row.cadencia_media, null);
+  assert.equal(row.desnivel_m, null);
+  assert.equal(row.tss, null);
+
+  const vacios = normalizeActivity({
+    id: 'i1',
+    start_date_local: '2026-05-01T08:00:00',
+    average_watts: '',
+    icu_training_load: null,
+  });
+  assert.equal(vacios.pot_media, null);
+  assert.equal(vacios.tss, null);
+});
+
+test('normalizeActivity conserva un cero real de potencia', () => {
+  const row = normalizeActivity({
+    id: 'i2',
+    start_date_local: '2026-05-01T08:00:00',
+    average_watts: 0,
+  });
+
+  assert.equal(row.pot_media, 0);
+});

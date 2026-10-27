@@ -89,6 +89,38 @@ test('streamsToTrack acepta el formato de array [{type, data}]', () => {
   assert.equal(track.p[0], 200);
 });
 
+test('streamsToTrack recompone el GPS que Intervals parte en data/data2', () => {
+  const streams = buildStreams({ seconds: 120 });
+  const lats = streams.latlng.map(([lat]) => lat);
+  const lons = streams.latlng.map(([, lon]) => lon);
+
+  const asArray = Object.entries(streams)
+    .filter(([type]) => type !== 'latlng')
+    .map(([type, data]) => ({ type, data }));
+  asArray.push({ type: 'latlng', name: 'latlng', data: lats, data2: lons });
+
+  const track = engine.streamsToTrack(asArray);
+
+  assert.equal(track.hasGps, true);
+  assert.equal(track.lat.length, 120);
+  assert.equal(track.lon[0], BASE_LON);
+  assert.ok(track.bounds.maxLat > track.bounds.minLat);
+});
+
+test('streamsToTrack recompone el GPS cuando el stream llega como objeto', () => {
+  const streams = buildStreams({ seconds: 120 });
+  const lats = streams.latlng.map(([lat]) => lat);
+  const lons = streams.latlng.map(([, lon]) => lon);
+
+  const track = engine.streamsToTrack({
+    ...streams,
+    latlng: { data: lats, data2: lons },
+  });
+
+  assert.equal(track.hasGps, true);
+  assert.equal(track.lon[0], BASE_LON);
+});
+
 test('streamsToTrack no inventa potencia cuando no existe', () => {
   const track = engine.streamsToTrack(buildStreams({ withPower: false, seconds: 120 }));
 
