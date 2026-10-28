@@ -38,14 +38,18 @@ EMAIL = os.getenv("GARMIN_EMAIL")
 PASSWORD = os.getenv("GARMIN_PASSWORD")
 
 # Supabase config
+# El sync corre en backend: usa la secret key, que salta RLS. La anon key se
+# mantiene como compatibilidad mientras se completa la migración.
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_ANON_KEY")
 USER_ID = os.getenv("USER_ID")
 
 # Validar que las variables de entorno requeridas existen
-for _var in ("GARMIN_EMAIL", "GARMIN_PASSWORD", "SUPABASE_URL", "SUPABASE_ANON_KEY", "USER_ID"):
+for _var in ("GARMIN_EMAIL", "GARMIN_PASSWORD", "SUPABASE_URL", "USER_ID"):
     if not os.getenv(_var):
         raise SystemExit(f"[ERROR] Falta la variable de entorno: {_var}")
+if not SUPABASE_KEY:
+    raise SystemExit("[ERROR] Falta la variable de entorno: SUPABASE_SECRET_KEY (o SUPABASE_ANON_KEY)")
 
 # Rango de fechas
 DEFAULT_START = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -155,6 +159,25 @@ def post_batches(rows, max_bytes=MAX_POST_BYTES):
         yield batch
 
 
+def _supabase_headers(prefer: str) -> dict:
+    """
+    Cabeceras para PostgREST.
+
+    Las claves nuevas (sb_publishable_/sb_secret_) no son JWT: viajan solo en
+    `apikey`. Mandarlas tambien en `Authorization: Bearer` hace que PostgREST
+    intente validarlas como JWT y responda 401. Las claves legacy (empiezan
+    por "eyJ") si necesitan el Bearer.
+    """
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": prefer,
+    }
+    if SUPABASE_KEY.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+    return headers
+
+
 def supabase_upsert(table: str, rows: list, requested_start_date: str = None, requested_end_date: str = None):
     """
     Sube datos a Supabase con upsert. Si POST falla por duplicados (409), usa PATCH.
@@ -229,12 +252,7 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
         post_url = f"{url}?on_conflict=user_id,date,metric,timestamp_ms,ordinal"
     else:
         post_url = f"{url}?on_conflict=user_id,date"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal"
-    }
+    headers = _supabase_headers("resolution=merge-duplicates,return=minimal")
 
     # UPSERT por lotes: se envian varios POST con las mismas claves y acotados en
     # tamano (ver post_batches). La semantica es la de siempre
@@ -279,12 +297,7 @@ def supabase_upsert(table: str, rows: list, requested_start_date: str = None, re
         else:
             filters = f"user_id=eq.{row['user_id']}&date=eq.{row['date']}"
         patch_url = f"{url}?{filters}"
-        headers_patch = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
+        headers_patch = _supabase_headers("return=representation")
         try:
             r = requests.patch(patch_url, headers=headers_patch, json=row, timeout=30)
             if r.status_code < 400:

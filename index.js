@@ -225,13 +225,19 @@ if (CONFIG.TELEGRAM_TOKEN) {
 }
 
 // ─── SUPABASE ───
+// El bot es un backend: escribe con la clave de servicio (secret key), que
+// salta RLS. SUPABASE_ANON_KEY se mantiene como compatibilidad mientras se
+// hace la migración, pero con RLS activo la anon key ya no puede escribir.
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('❌ FATAL: SUPABASE_URL y SUPABASE_ANON_KEY son obligatorias en las variables de entorno');
+const SUPABASE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ FATAL: SUPABASE_URL y SUPABASE_SECRET_KEY (o SUPABASE_ANON_KEY) son obligatorias en las variables de entorno');
   process.exit(1);
 }
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+if (!process.env.SUPABASE_SECRET_KEY) {
+  console.warn('⚠️  SUPABASE_SECRET_KEY no definida: usando SUPABASE_ANON_KEY. Con RLS activo el bot no podrá escribir.');
+}
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ─── APP MÓVIL: ACTIVIDADES Y SEGMENTOS ─────────────────────
 // La app lee resultados ya calculados: nunca escribe en Supabase ni

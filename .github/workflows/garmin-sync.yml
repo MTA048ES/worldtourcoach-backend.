@@ -92,6 +92,9 @@ jobs:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # Preferente: clave de servicio (salta RLS). Si el secret no existe,
+          # el script cae a SUPABASE_ANON_KEY automáticamente.
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           USER_ID: ${{ secrets.USER_ID }}
         run: |

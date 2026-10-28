@@ -307,6 +307,12 @@ function createFakeRepository() {
     async listEffortsForSegment(segmentoId) {
       return esfuerzos.filter((item) => item.segmento_id === segmentoId);
     },
+    async listEfforts(segmentosId) {
+      const wanted = new Set(segmentosId);
+      return esfuerzos
+        .filter((item) => wanted.has(item.segmento_id))
+        .sort((a, b) => a.tiempo_s - b.tiempo_s);
+    },
   };
 }
 
@@ -397,4 +403,40 @@ test('createManualSegment rechaza nombres vacíos', async () => {
     () => service.createManualSegment({ nombre: ' ', actividadId: 'a1', startPoint: {}, endPoint: {} }),
     /nombre/i,
   );
+});
+
+test('listSegmentsForActivity devuelve el puesto en el ranking', async () => {
+  const repository = createFakeRepository();
+  repository.segmentos.push({
+    id: 'seg-1',
+    nombre: 'Cuesta test',
+    tipo: 'manual',
+    distancia_m: 1200,
+    desnivel_m: 40,
+    pendiente_media: 3.2,
+    estado: 'listo',
+  });
+  repository.esfuerzos.push(
+    { segmento_id: 'seg-1', actividad_id: 'a1', fecha: '2026-05-01T08:00:00Z', tiempo_s: 300, pot_media: 200, np: 210, fc_media: 140, velocidad_media: 24 },
+    { segmento_id: 'seg-1', actividad_id: 'a2', fecha: '2026-05-02T08:00:00Z', tiempo_s: 280, pot_media: 230, np: 240, fc_media: 150, velocidad_media: 26 },
+  );
+
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  const delRapido = await service.listSegmentsForActivity('a2');
+  assert.equal(delRapido.length, 1);
+  assert.equal(delRapido[0].segmento_id, 'seg-1');
+  assert.equal(delRapido[0].posicion, 1);
+  assert.equal(delRapido[0].intentos, 2);
+
+  const delLento = await service.listSegmentsForActivity('a1');
+  assert.equal(delLento[0].posicion, 2);
+  assert.equal(delLento[0].tiempo_s, 300);
+});
+
+test('listSegmentsForActivity devuelve vacío sin esfuerzos', async () => {
+  const repository = createFakeRepository();
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  assert.deepEqual(await service.listSegmentsForActivity('inexistente'), []);
 });
