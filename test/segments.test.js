@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 
 const engine = require('../lib/segmentEngine');
 const codec = require('../lib/trackCodec');
+const strava = require('../lib/stravaSegments');
 const { createSegmentsService } = require('../lib/segmentsService');
 
 const BASE_LAT = 40.0;
@@ -282,7 +283,7 @@ function createFakeRepository() {
       return segmentos.find((item) => item.id === id) || null;
     },
     async insertSegment(row) {
-      const segment = { ...row, id: `seg-${segmentos.length + 1}` };
+      const segment = { ...row, id: row.id || `seg-${segmentos.length + 1}` };
       segmentos.push(segment);
       return segment;
     },
@@ -439,4 +440,77 @@ test('listSegmentsForActivity devuelve vacío sin esfuerzos', async () => {
   const service = createSegmentsService({ repository, userId: 'u1' });
 
   assert.deepEqual(await service.listSegmentsForActivity('inexistente'), []);
+});
+
+test('stravaSegmentUuid es determinista y distinto por segmento', () => {
+  const a = strava.stravaSegmentUuid(16477939);
+  const b = strava.stravaSegmentUuid(16477939);
+  const c = strava.stravaSegmentUuid(16477940);
+
+  assert.equal(a, b);
+  assert.notEqual(a, c);
+  assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+test('effortRange descarta índices fuera de la traza', () => {
+  const track = engine.streamsToTrack(buildStreams({ seconds: 300 }));
+
+  assert.ok(strava.effortRange(track, { start_index: 10, end_index: 200 }));
+  assert.equal(strava.effortRange(track, { start_index: 250, end_index: 10 }), null);
+  assert.equal(strava.effortRange(track, { start_index: 10, end_index: 9999 }), null);
+  assert.equal(strava.effortRange(track, { start_index: 'x', end_index: 20 }), null);
+});
+
+test('importStravaSegments crea segmento y esfuerzo desde los índices', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+  const service = createSegmentsService({ repository, userId: 'u1' });
+  const intervals = {
+    async getActivitySegments() {
+      return [{ segment_id: 999, name: 'Recta de prueba', start_index: 100, end_index: 400, starred: false }];
+    },
+  };
+
+  const result = await service.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+
+  assert.equal(result.creados, 1);
+  assert.equal(result.esfuerzos, 1);
+
+  const segment = await repository.getSegment(strava.stravaSegmentUuid(999));
+  assert.ok(segment);
+  assert.equal(segment.nombre, 'Recta de prueba');
+  assert.ok(segment.distancia_m > 0);
+  assert.ok(Number.isFinite(segment.inicio_lat));
+  assert.ok(Number.isFinite(segment.fin_lat));
+
+  const esfuerzos = await repository.listEffortsForSegment(segment.id);
+  assert.equal(esfuerzos.length, 1);
+  assert.equal(esfuerzos[0].tiempo_s, Math.round(track.t[400] - track.t[100]));
+});
+
+test('importStravaSegments es idempotente', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+  const service = createSegmentsService({ repository, userId: 'u1' });
+  const intervals = {
+    async getActivitySegments() {
+      return [{ segment_id: 999, name: 'Recta de prueba', start_index: 100, end_index: 400 }];
+    },
+  };
+
+  await service.importStravaSegments({ activityId: 'a1', fecha: '2026-05-01T08:00:00Z', track, intervals });
+  const segunda = await service.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+
+  assert.equal(segunda.creados, 0);
+  assert.equal(segunda.esfuerzos, 1);
 });

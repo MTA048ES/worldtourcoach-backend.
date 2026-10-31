@@ -58,6 +58,26 @@ test('getStreams usa la ruta singular de actividad', async () => {
   assert.match(urlPedida, /\/activity\/i999\/streams\.json$/);
 });
 
+test('getActivitySegments devuelve la lista de Intervals', async () => {
+  let urlPedida = '';
+  const client = crearCliente(async (url) => {
+    urlPedida = url;
+    return respuesta(200, [{ segment_id: 1, name: 'Recta', start_index: 5, end_index: 50 }]);
+  });
+
+  const segmentos = await client.getActivitySegments('i999');
+
+  assert.equal(segmentos.length, 1);
+  assert.equal(segmentos[0].segment_id, 1);
+  assert.match(urlPedida, /\/activity\/i999\/segments$/);
+});
+
+test('getActivitySegments devuelve [] si la actividad no tiene segmentos (404)', async () => {
+  const client = crearCliente(async () => respuesta(404, {}));
+
+  assert.deepEqual(await client.getActivitySegments('i999'), []);
+});
+
 test('reintenta una vez tras un 429 respetando Retry-After', async () => {
   let intentos = 0;
   const client = crearCliente(async () => {
