@@ -100,6 +100,9 @@ function createFakeRepository() {
     async listEffortsForSegment(segmentoId) {
       return esfuerzos.filter((item) => item.segmento_id === segmentoId);
     },
+    async listEffortsForActivity(actividadId) {
+      return esfuerzos.filter((item) => item.actividad_id === actividadId);
+    },
   };
 }
 
