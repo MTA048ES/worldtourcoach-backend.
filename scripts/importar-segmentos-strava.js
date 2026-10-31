@@ -60,9 +60,12 @@ async function main() {
 
   let totalCreados = 0;
   let totalEsfuerzos = 0;
+  let totalEmparejados = 0;
   let conTraza = 0;
   let sinSegmentos = 0;
   let errores = 0;
+
+  let segmentos = await repository.listSegments();
 
   for (let i = 0; i < actividades.length; i++) {
     const actividad = actividades[i];
@@ -95,8 +98,21 @@ async function main() {
       conTraza++;
       totalCreados += resultado.creados;
       totalEsfuerzos += resultado.esfuerzos;
-      if (resultado.esfuerzos > 0) {
-        console.log(`${etiqueta} → +${resultado.creados} segmentos, ${resultado.esfuerzos} esfuerzos`);
+      if (resultado.creados > 0) segmentos = await repository.listSegments();
+
+      // Rutas que se repiten (rodillo sobre todo): empareja por geometría.
+      const emparejados = await service.assignMissingEfforts({
+        activityId: actividad.actividad_id,
+        fecha: actividad.fecha,
+        track,
+        segments: segmentos,
+      });
+      totalEmparejados += emparejados;
+
+      if (resultado.esfuerzos > 0 || emparejados > 0) {
+        console.log(
+          `${etiqueta} → +${resultado.creados} segmentos, ${resultado.esfuerzos} esfuerzos Strava, ${emparejados} por geometría`,
+        );
       }
     } catch (error) {
       errores++;
@@ -109,6 +125,7 @@ async function main() {
   console.log(`Actividades sin traza/segmentos  : ${sinSegmentos}`);
   console.log(`Segmentos nuevos de Strava       : ${totalCreados}`);
   console.log(`Esfuerzos importados             : ${totalEsfuerzos}`);
+  console.log(`Esfuerzos emparejados geométrico : ${totalEmparejados}`);
   console.log(`Errores                          : ${errores}`);
 }
 

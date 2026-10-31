@@ -308,6 +308,9 @@ function createFakeRepository() {
     async listEffortsForSegment(segmentoId) {
       return esfuerzos.filter((item) => item.segmento_id === segmentoId);
     },
+    async listEffortsForActivity(actividadId) {
+      return esfuerzos.filter((item) => item.actividad_id === actividadId);
+    },
     async listEfforts(segmentosId) {
       const wanted = new Set(segmentosId);
       return esfuerzos
@@ -513,4 +516,76 @@ test('importStravaSegments es idempotente', async () => {
 
   assert.equal(segunda.creados, 0);
   assert.equal(segunda.esfuerzos, 1);
+});
+
+test('assignMissingEfforts empareja por geometría y no duplica', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+
+  const segmento = {
+    id: 'seg-geo',
+    nombre: 'Tramo geométrico',
+    tipo: 'strava',
+    distancia_m: Math.round(track.d[300] - track.d[100]),
+    inicio_lat: track.lat[100],
+    inicio_lon: track.lon[100],
+    fin_lat: track.lat[300],
+    fin_lon: track.lon[300],
+    radio_m: 45,
+  };
+  repository.segmentos.push(segmento);
+
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  const primera = await service.assignMissingEfforts({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    segments: [segmento],
+  });
+  const segunda = await service.assignMissingEfforts({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    segments: [segmento],
+  });
+
+  assert.equal(primera, 1);
+  assert.equal(segunda, 0);
+  assert.equal(repository.esfuerzos.length, 1);
+});
+
+test('importStravaSegments descarta tramos parciales que no cubren el segmento', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  repository.segmentos.push({
+    id: strava.stravaSegmentUuid(999),
+    nombre: 'Segmento largo',
+    tipo: 'manual',
+    distancia_m: 5000,
+    inicio_lat: track.lat[100],
+    inicio_lon: track.lon[100],
+    fin_lat: track.lat[400],
+    fin_lon: track.lon[400],
+  });
+
+  const intervals = {
+    async getActivitySegments() {
+      // Índices que solo cubren unos metros del segmento.
+      return [{ segment_id: 999, name: 'Segmento largo', start_index: 100, end_index: 110 }];
+    },
+  };
+
+  const result = await service.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+
+  assert.equal(result.creados, 0);
+  assert.equal(result.esfuerzos, 0);
+  assert.equal(repository.esfuerzos.length, 0);
 });
