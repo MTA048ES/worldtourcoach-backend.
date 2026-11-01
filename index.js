@@ -7,7 +7,10 @@ const { createActivityRepository } = require('./lib/activityRepository');
 const { createSegmentsService } = require('./lib/segmentsService');
 const { createIntervalsClient } = require('./lib/intervalsClient');
 const { createActivitiesSync } = require('./lib/activitiesSync');
-const { createAppApiRouter } = require('./lib/appApiRouter');
+const { bearerToken } = require('./lib/appApiRouter');
+const { construirPerfiles, perfilPorToken } = require('./lib/appUsers');
+const { crearServiciosApp } = require('./lib/appUserServices');
+const { crearServicioLiga } = require('./lib/liga');
 require('dotenv').config({ path: 'ENV' });
 
 // ═══════════════════════════════════════════════════════════════
@@ -270,6 +273,52 @@ const activitiesSync = intervalsClient
       logger: console.log
     })
   : null;
+
+// ─── PERFILES DE LA APP (2 JUGADORES) ────────────────────────
+// El token de siempre sigue valiendo para Manu. Los amigos se
+// declaran en APP_USERS con su propio token y su clave de Intervals.
+const perfilLegacy = CONFIG.APP_API_TOKEN
+  ? {
+      token: CONFIG.APP_API_TOKEN,
+      nombre: process.env.APP_USER_NAME || 'Manu',
+      intervalsApiKey: CONFIG.INTERVALS_API_KEY,
+      athleteId: CONFIG.ATHLETE_ID,
+      userId: APP_USER_ID,
+      origen: 'legacy',
+    }
+  : null;
+
+const { perfiles: perfilesApp } = construirPerfiles({
+  legacy: perfilLegacy,
+  raw: process.env.APP_USERS,
+  logger: console.log,
+});
+
+const serviciosApp = new Map();
+
+function getServiciosApp(perfil) {
+  if (!serviciosApp.has(perfil)) {
+    serviciosApp.set(
+      perfil,
+      crearServiciosApp({ supabase, perfil, logger: console.log }),
+    );
+  }
+  return serviciosApp.get(perfil).get();
+}
+
+const ligaApp = crearServicioLiga({
+  usuarios: perfilesApp.map((perfil) => ({
+    perfil,
+    getServicios: () => getServiciosApp(perfil),
+  })),
+  logger: console.log,
+});
+
+console.log(
+  `👥 Perfiles app: ${perfilesApp.length}${
+    perfilesApp.length > 0 ? ` (${perfilesApp.map((perfil) => perfil.nombre).join(', ')})` : ''
+  }`,
+);
 
 // ═══════════════════════════════════════════════════════════════
 // 📊 SUPABASE - PERSISTENCIA DE DATOS
@@ -7850,13 +7899,57 @@ app.get('/api/config', (req, res) => {
 });
 
 // ─── API DE LA APP (token obligatorio) ───
-app.use('/api/app', createAppApiRouter({
-  repository: activityRepository,
-  segmentsService,
-  activitiesSync,
-  token: CONFIG.APP_API_TOKEN,
-  logger: console.log
-}));
+function authApp(req, res, next) {
+  if (perfilesApp.length === 0) {
+    return res.status(503).json({
+      success: false,
+      error: 'La app no tiene perfiles configurados en el servidor',
+    });
+  }
+  const perfil = perfilPorToken(perfilesApp, bearerToken(req));
+  if (!perfil) {
+    return res.status(401).json({ success: false, error: 'Token no válido' });
+  }
+  req.perfilApp = perfil;
+  return next();
+}
+
+function handleApp(fn) {
+  return (req, res) => {
+    Promise.resolve(fn(req, res)).catch((error) => {
+      console.log(`[appApi] ${req.method} ${req.path}: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          error: 'No se ha podido completar la petición',
+        });
+      }
+    });
+  };
+}
+
+app.get(
+  '/api/app/liga',
+  authApp,
+  handleApp(async (req, res) => {
+    const data = await ligaApp.getLiga({ refresh: req.query.refresh === '1' });
+    res.json({ success: true, data });
+  }),
+);
+
+app.use('/api/app', authApp, (req, res, next) => {
+  getServiciosApp(req.perfilApp)
+    .then((servicios) => servicios.router(req, res, next))
+    .catch((error) => {
+      console.log(`[appApi] perfil ${req.perfilApp.nombre}: ${error.message}`);
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          error: 'Perfil no disponible. Revisa la configuración del servidor.',
+        });
+      }
+    });
+});
 
 // ─── MANEJO DE ERRORES ───
 app.use((req, res) => {
