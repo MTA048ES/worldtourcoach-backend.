@@ -64,23 +64,45 @@ test('el segmento de la semana cae dentro de la Zona 0 y rota', () => {
   const dos = elegirSegmento({ segmentos, semana: '2026-10-26' });
   assert.ok(uno);
   assert.equal(uno.segmento.id, dos.segmento.id);
-  assert.equal(uno.radio, 15);
+  assert.equal(uno.radio, 20);
 
   const lejano = segmentoCerca('z', { inicio_lat: 40.4, inicio_lon: -3.7, fin_lat: 40.41, fin_lon: -3.69 });
   const conLejano = elegirSegmento({ segmentos: [lejano], semana: '2026-10-26' });
   assert.equal(conLejano, null);
 });
 
-test('si no hay segmentos a 15 km, amplía a 20', () => {
+test('si no hay segmentos a 20 km, amplía a 25', () => {
   const lejos = ['a', 'b', 'c'].map((id, indice) =>
     segmentoCerca(`lejos-${id}`, {
-      inicio_lat: CERCA.lat + 0.162,
+      inicio_lat: CERCA.lat + 0.207,
       inicio_lon: CERCA.lon + indice * 0.001,
-      fin_lat: CERCA.lat + 0.172,
+      fin_lat: CERCA.lat + 0.217,
       fin_lon: CERCA.lon + indice * 0.001 + 0.01,
     }),
   );
   const elegido = elegirSegmento({ segmentos: lejos, semana: '2026-10-26' });
+  assert.ok(elegido);
+  assert.equal(elegido.radio, 25);
+});
+
+test('el pique prioriza subidas frente a llanos', () => {
+  const llanos = ['llano-1', 'llano-2', 'llano-3'].map((id) =>
+    segmentoCerca(id, { pendiente_media: 0.4, desnivel_m: 8 }),
+  );
+  const subidas = ['subida-1', 'subida-2', 'subida-3'].map((id) =>
+    segmentoCerca(id, { pendiente_media: 3.2, desnivel_m: 70 }),
+  );
+  const elegido = elegirSegmento({ segmentos: [...llanos, ...subidas], semana: '2026-10-26' });
+  assert.ok(elegido);
+  assert.ok(elegido.segmento.pendiente_media >= 1.5);
+  assert.equal(elegido.candidatos, 3);
+});
+
+test('si no hay subidas suficientes, acepta llanos', () => {
+  const llanos = ['llano-1', 'llano-2', 'llano-3'].map((id) =>
+    segmentoCerca(id, { pendiente_media: 0.4, desnivel_m: 8 }),
+  );
+  const elegido = elegirSegmento({ segmentos: llanos, semana: '2026-10-26' });
   assert.ok(elegido);
   assert.equal(elegido.radio, 20);
 });
