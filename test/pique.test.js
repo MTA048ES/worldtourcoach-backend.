@@ -71,6 +71,20 @@ test('el segmento de la semana cae dentro de la Zona 0 y rota', () => {
   assert.equal(conLejano, null);
 });
 
+test('si no hay segmentos a 15 km, amplía a 20', () => {
+  const lejos = ['a', 'b', 'c'].map((id, indice) =>
+    segmentoCerca(`lejos-${id}`, {
+      inicio_lat: CERCA.lat + 0.162,
+      inicio_lon: CERCA.lon + indice * 0.001,
+      fin_lat: CERCA.lat + 0.172,
+      fin_lon: CERCA.lon + indice * 0.001 + 0.01,
+    }),
+  );
+  const elegido = elegirSegmento({ segmentos: lejos, semana: '2026-10-26' });
+  assert.ok(elegido);
+  assert.equal(elegido.radio, 20);
+});
+
 test('los segmentos automáticos no compiten en el pique', () => {
   const automaticos = [
     segmentoCerca('auto-1', { tipo: 'auto' }),
