@@ -25,6 +25,7 @@ function segmentoCerca(id, extra = {}) {
     id,
     nombre: `Segmento ${id}`,
     estado: 'listo',
+    tipo: 'strava',
     distancia_m: 2500,
     desnivel_m: 80,
     pendiente_media: 2,
@@ -68,6 +69,25 @@ test('el segmento de la semana cae dentro de la Zona 0 y rota', () => {
   const lejano = segmentoCerca('z', { inicio_lat: 40.4, inicio_lon: -3.7, fin_lat: 40.41, fin_lon: -3.69 });
   const conLejano = elegirSegmento({ segmentos: [lejano], semana: '2026-10-26' });
   assert.equal(conLejano, null);
+});
+
+test('los segmentos automáticos no compiten en el pique', () => {
+  const automaticos = [
+    segmentoCerca('auto-1', { tipo: 'auto' }),
+    segmentoCerca('auto-2', { tipo: 'auto' }),
+    segmentoCerca('auto-3', { tipo: 'auto' }),
+  ];
+  assert.equal(elegirSegmento({ segmentos: automaticos, semana: '2026-10-26' }), null);
+
+  const mezcla = [
+    ...automaticos,
+    segmentoCerca('strava-1'),
+    segmentoCerca('strava-2'),
+    segmentoCerca('manual-1', { tipo: 'manual' }),
+  ];
+  const elegido = elegirSegmento({ segmentos: mezcla, semana: '2026-10-26' });
+  assert.ok(elegido);
+  assert.notEqual(elegido.segmento.tipo, 'auto');
 });
 
 test('las métricas de la semana excluyen e-bike y separan rodillo', () => {
