@@ -373,6 +373,51 @@ test('listEffortsForSharedSegment calcula sobre una geometría ajena sin guardar
   assert.equal(repository.segmentos.length, 0, 'no crea segmentos');
 });
 
+test('listEffortsForSharedSegments recorre las trazas una sola vez', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams());
+  seedActivity(repository, { id: 'a1', track });
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  let scans = 0;
+  const iterate = repository.iterateTracks;
+  repository.iterateTracks = async function* (...args) {
+    scans += 1;
+    yield* iterate.call(repository, ...args);
+  };
+
+  const segmentos = [
+    {
+      id: 'liga-a',
+      distancia_m: 4000,
+      inicio_lat: track.lat[0],
+      inicio_lon: track.lon[0],
+      fin_lat: track.lat[500],
+      fin_lon: track.lon[500],
+      radio_m: 45,
+    },
+    {
+      id: 'liga-b',
+      distancia_m: 4000,
+      inicio_lat: track.lat[600],
+      inicio_lon: track.lon[600],
+      fin_lat: track.lat[1100],
+      fin_lon: track.lon[1100],
+      radio_m: 45,
+    },
+  ];
+
+  const esfuerzos = await service.listEffortsForSharedSegments(segmentos);
+
+  assert.equal(scans, 1);
+  assert.equal(esfuerzos.length, 2);
+  assert.deepEqual(
+    esfuerzos.map((esfuerzo) => esfuerzo.segmento_id).sort(),
+    ['liga-a', 'liga-b'],
+  );
+  assert.equal(repository.esfuerzos.length, 0, 'no escribe esfuerzos');
+});
+
 test('storeAutoSegments reutiliza el segmento en otra salida', async () => {
   const repository = createFakeRepository();
   const track = engine.streamsToTrack(buildStreams());

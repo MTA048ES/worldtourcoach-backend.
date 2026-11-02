@@ -64,6 +64,7 @@ function usuario({
       ...(esfuerzosCompartidos
         ? {
             segmentsService: {
+              listEffortsForSharedSegments: async () => esfuerzosCompartidos,
               listEffortsForSharedSegment: async () => esfuerzosCompartidos,
             },
           }
