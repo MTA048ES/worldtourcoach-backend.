@@ -347,6 +347,32 @@ test('storeAutoSegments crea el segmento y su esfuerzo', async () => {
   assert.equal(repository.esfuerzos[0].pot_media, 200);
 });
 
+test('listEffortsForSharedSegment calcula sobre una geometría ajena sin guardar', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams());
+  seedActivity(repository, { id: 'a1', track });
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  const segment = {
+    id: 'segmento-de-la-liga',
+    distancia_m: 4000,
+    inicio_lat: track.lat[0],
+    inicio_lon: track.lon[0],
+    fin_lat: track.lat[500],
+    fin_lon: track.lon[500],
+    radio_m: 45,
+  };
+
+  const esfuerzos = await service.listEffortsForSharedSegment(segment);
+
+  assert.equal(esfuerzos.length, 1);
+  assert.equal(esfuerzos[0].segmento_id, 'segmento-de-la-liga');
+  assert.equal(esfuerzos[0].actividad_id, 'a1');
+  assert.ok(esfuerzos[0].tiempo_s > 0);
+  assert.equal(repository.esfuerzos.length, 0, 'no escribe esfuerzos');
+  assert.equal(repository.segmentos.length, 0, 'no crea segmentos');
+});
+
 test('storeAutoSegments reutiliza el segmento en otra salida', async () => {
   const repository = createFakeRepository();
   const track = engine.streamsToTrack(buildStreams());

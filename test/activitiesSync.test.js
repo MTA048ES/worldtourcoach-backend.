@@ -56,6 +56,13 @@ function createFakeRepository() {
     async upsertActivity(row) {
       actividades.set(row.actividad_id, row);
     },
+    async latestActivityDate() {
+      const fechas = [...actividades.values()]
+        .map((actividad) => actividad.fecha)
+        .filter(Boolean)
+        .sort();
+      return fechas.length > 0 ? fechas[fechas.length - 1] : null;
+    },
     async upsertTrack(row) {
       tracks.set(row.actividad_id, row);
     },
@@ -108,9 +115,12 @@ function createFakeRepository() {
 
 function createFakeIntervals(activities) {
   const llamadasStreams = [];
+  const llamadasLista = [];
   return {
     llamadasStreams,
-    async listActivities() {
+    llamadasLista,
+    async listActivities(ventana) {
+      llamadasLista.push(ventana);
       return activities;
     },
     async getStreams(id) {
@@ -177,6 +187,25 @@ test('el segundo sync no vuelve a descargar lo ya guardado', async () => {
   assert.equal(segunda.nuevas, 0);
   assert.equal(intervals.llamadasStreams.length, 2, 'no se repiten descargas');
   assert.equal(repository.segmentos.length, 1, 'no se duplican segmentos');
+});
+
+test('sin fecha, el sync empieza cerca de la última actividad guardada', async () => {
+  const repository = createFakeRepository();
+  const intervals = createFakeIntervals(ACTIVIDADES);
+  const sync = buildSync(repository, intervals);
+
+  await sync.run({ desde: '2026-01-01', hasta: '2026-06-01' });
+  intervals.llamadasLista.length = 0;
+
+  await sync.run({ hasta: '2026-06-01' });
+
+  assert.equal(intervals.llamadasLista.length, 1);
+  assert.equal(
+    intervals.llamadasLista[0].oldest,
+    '2026-04-24',
+    'la última actividad es del 8 de mayo: se solapan 14 días',
+  );
+  assert.equal(intervals.llamadasLista[0].newest, '2026-06-01');
 });
 
 test('un fallo en una actividad no aborta el resto', async () => {

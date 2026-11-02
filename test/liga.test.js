@@ -29,7 +29,15 @@ function semana(extra = {}) {
   };
 }
 
-function usuario({ id, nombre, semanas, esfuerzos = [], calcularSegmento = null }) {
+function usuario({
+  id,
+  nombre,
+  semanas,
+  esfuerzos = [],
+  calcularSegmento = null,
+  segmentoCompleto = null,
+  esfuerzosCompartidos = null,
+}) {
   return {
     perfil: { userId: id, nombre },
     getServicios: async () => ({
@@ -49,7 +57,17 @@ function usuario({ id, nombre, semanas, esfuerzos = [], calcularSegmento = null 
       },
       repository: {
         listEfforts: async () => esfuerzos,
+        ...(segmentoCompleto
+          ? { getSegment: async () => segmentoCompleto }
+          : {}),
       },
+      ...(esfuerzosCompartidos
+        ? {
+            segmentsService: {
+              listEffortsForSharedSegment: async () => esfuerzosCompartidos,
+            },
+          }
+        : {}),
     }),
   };
 }
@@ -109,6 +127,61 @@ test('la liga reparte puntos y maillots entre dos personas', async () => {
   assert.equal(liga.tabla[1].puntos, 20);
   assert.equal(liga.maillots.amarillo.user_id, 'i1');
   assert.equal(liga.maillots.montana.user_id, 'i2');
+});
+
+test('compara el segmento aunque el rival no tenga el mismo Strava', async () => {
+  const geometria = {
+    id: 'seg-mangalobos',
+    nombre: 'Mangalobos',
+    distancia_m: 1900,
+    pendiente_media: 3.1,
+    inicio_lat: 37.9,
+    inicio_lon: -3.7,
+    fin_lat: 37.91,
+    fin_lon: -3.7,
+    radio_m: 45,
+  };
+  const ana = usuario({
+    id: 'i1',
+    nombre: 'Ana',
+    semanas: [semana({ km: 90, desnivel_m: 800, dias: 3 })],
+    esfuerzos: [
+      { fecha: '2026-10-27T10:00:00Z', tiempo_s: 300, segmento_id: 'seg-mangalobos' },
+    ],
+    segmentoCompleto: geometria,
+  });
+  const luis = usuario({
+    id: 'i2',
+    nombre: 'Luis',
+    semanas: [semana({ km: 60, desnivel_m: 500, dias: 2 })],
+    esfuerzos: [],
+    esfuerzosCompartidos: [
+      {
+        fecha: '2026-10-28T10:00:00Z',
+        tiempo_s: 320,
+        segmento_id: 'seg-mangalobos',
+        pot_media: 250,
+        np: 260,
+        fc_media: 165,
+        velocidad_media: 21.4,
+      },
+    ],
+  });
+
+  const liga = await crearServicioLiga({ usuarios: [ana, luis] }).calcular();
+  const filaLuis = liga.semanas[0].filas.find((fila) => fila.user_id === 'i2');
+
+  assert.equal(filaLuis.segmento_s, 320);
+  assert.equal(filaLuis.intentos, 1);
+  assert.equal(filaLuis.bonus_segmento, 1);
+
+  assert.equal(liga.segmento.comparativa.length, 2);
+  assert.equal(liga.segmento.comparativa[0].user_id, 'i1');
+  assert.equal(liga.segmento.comparativa[0].posicion, 1);
+  assert.equal(liga.segmento.comparativa[1].user_id, 'i2');
+  assert.equal(liga.segmento.comparativa[1].tiempo_s, 320);
+  assert.equal(liga.segmento.comparativa[1].pot_media, 250);
+  assert.equal(liga.segmento.comparativa[1].fc_media, 165);
 });
 
 test('todos aparecen aunque no hayan entrenado', async () => {
