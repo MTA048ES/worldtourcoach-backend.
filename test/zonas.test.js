@@ -50,12 +50,15 @@ test('cada potencia cae en su zona de Coggan', () => {
   assert.equal(zonaDePotencia(200, 0), 0);
 });
 
-test('la semana empieza en lunes', () => {
+test('la semana empieza en lunes en hora de Madrid', () => {
   // Sábado 31/10/2026 → lunes 26/10/2026.
   assert.equal(inicioSemana('2026-10-31T10:00:00Z'), '2026-10-26');
   assert.equal(inicioSemana('2026-10-26T00:00:00Z'), '2026-10-26');
-  assert.equal(inicioSemana('2026-11-01T23:59:00Z'), '2026-10-26');
+  // Domingo 1/11 a las 23:59 UTC ya es lunes 2/11 en Madrid (CET).
+  assert.equal(inicioSemana('2026-11-01T23:59:00Z'), '2026-11-02');
   assert.equal(inicioSemana('2026-11-02T00:00:00Z'), '2026-11-02');
+  // Verano: domingo 22:30 UTC ya es lunes en Madrid (CEST).
+  assert.equal(inicioSemana('2026-05-03T22:30:00Z'), '2026-05-04');
 });
 
 test('cuenta segundos por zona y descarta huecos sin potencia', () => {
@@ -72,6 +75,14 @@ test('polarización: fácil menos intenso sobre el total', () => {
   assert.equal(pi.indice, 0.6);
   assert.equal(pi.facil_pct, 80);
   assert.equal(pi.intenso_pct, 20);
+});
+
+test('sin FTP no se inventan zonas', async () => {
+  const servicio = crearServicioZonas({ repository: {}, codec });
+
+  await assert.rejects(() => servicio.getZonas(), /FTP no definido/);
+  await assert.rejects(() => servicio.getZonas({ ftp: '' }), /FTP no definido/);
+  await assert.rejects(() => servicio.calcular({ ftp: 0 }), /FTP no definido/);
 });
 
 test('el servicio agrupa por semanas y resume el periodo', async () => {
@@ -101,12 +112,23 @@ test('el servicio agrupa por semanas y resume el periodo', async () => {
           desnivel_m: 200,
           distancia_m: 25000,
         },
+        {
+          actividad_id: 'a3',
+          fecha: '2026-10-30T08:00:00Z',
+          tipo: 'EBikeRide',
+          nombre: 'Eléctrica',
+          duracion_s: 600,
+          tss: 500,
+          desnivel_m: 900,
+          distancia_m: 50000,
+        },
       ];
     },
     async getTrackRows() {
       return [
         { actividad_id: 'a1', datos: suave.datos },
         { actividad_id: 'a2', datos: fuerte.datos },
+        { actividad_id: 'a3', datos: fuerte.datos },
       ];
     },
   };

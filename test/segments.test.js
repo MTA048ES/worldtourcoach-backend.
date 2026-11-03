@@ -320,8 +320,26 @@ function createFakeRepository() {
   };
 }
 
-function seedActivity(repository, { id = 'a1', track, fecha = '2026-05-01T08:00:00Z' }) {
-  repository.actividades.set(id, { actividad_id: id, fecha });
+function seedActivity(
+  repository,
+  {
+    id = 'a1',
+    track,
+    fecha = '2026-05-01T08:00:00Z',
+    tipo = 'Ride',
+    duracion_s = 3600,
+    distancia_m = 30000,
+    tiene_gps = true,
+  } = {},
+) {
+  repository.actividades.set(id, {
+    actividad_id: id,
+    fecha,
+    tipo,
+    duracion_s,
+    distancia_m,
+    tiene_gps,
+  });
   const encoded = codec.encodeTrack(track);
   repository.tracks.set(id, { actividad_id: id, datos: encoded.datos, muestras: encoded.muestras });
 }
@@ -345,6 +363,36 @@ test('storeAutoSegments crea el segmento y su esfuerzo', async () => {
   assert.equal(repository.segmentos[0].categoria, '3');
   assert.equal(repository.esfuerzos.length, 1);
   assert.equal(repository.esfuerzos[0].pot_media, 200);
+});
+
+test('una e-bike no crea segmentos ni compite en la comparativa', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams());
+  seedActivity(repository, { track, tipo: 'EBikeRide' });
+  const service = createSegmentsService({ repository, userId: 'u1' });
+
+  const result = await service.storeAutoSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    segments: [],
+    actividad: { tipo: 'EBikeRide', duracion_s: 3600, distancia_m: 30000, tiene_gps: true },
+  });
+
+  assert.deepEqual(result, { creados: 0, esfuerzos: 0 });
+  assert.equal(repository.segmentos.length, 0);
+  assert.equal(repository.esfuerzos.length, 0);
+
+  const segment = {
+    id: 'segmento-de-la-liga',
+    distancia_m: 4000,
+    inicio_lat: track.lat[0],
+    inicio_lon: track.lon[0],
+    fin_lat: track.lat[500],
+    fin_lon: track.lon[500],
+    radio_m: 45,
+  };
+  assert.deepEqual(await service.listEffortsForSharedSegment(segment), []);
 });
 
 test('listEffortsForSharedSegment calcula sobre una geometría ajena sin guardar', async () => {
@@ -516,14 +564,20 @@ test('listSegmentsForActivity devuelve vacío sin esfuerzos', async () => {
   assert.deepEqual(await service.listSegmentsForActivity('inexistente'), []);
 });
 
-test('stravaSegmentUuid es determinista y distinto por segmento', () => {
+test('stravaSegmentUuid es determinista y distinto por segmento y usuario', () => {
   const a = strava.stravaSegmentUuid(16477939);
   const b = strava.stravaSegmentUuid(16477939);
   const c = strava.stravaSegmentUuid(16477940);
+  const deU1 = strava.stravaSegmentUuid(16477939, 'u1');
+  const deU2 = strava.stravaSegmentUuid(16477939, 'u2');
 
   assert.equal(a, b);
   assert.notEqual(a, c);
+  assert.equal(deU1, strava.stravaSegmentUuid(16477939, 'u1'));
+  assert.notEqual(deU1, deU2);
+  assert.notEqual(deU1, a);
   assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.match(deU1, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
 test('effortRange descarta índices fuera de la traza', () => {
@@ -555,7 +609,7 @@ test('importStravaSegments crea segmento y esfuerzo desde los índices', async (
   assert.equal(result.creados, 1);
   assert.equal(result.esfuerzos, 1);
 
-  const segment = await repository.getSegment(strava.stravaSegmentUuid(999));
+  const segment = await repository.getSegment(strava.stravaSegmentUuid(999, 'u1'));
   assert.ok(segment);
   assert.equal(segment.nombre, 'Recta de prueba');
   assert.ok(segment.distancia_m > 0);
@@ -565,6 +619,92 @@ test('importStravaSegments crea segmento y esfuerzo desde los índices', async (
   const esfuerzos = await repository.listEffortsForSegment(segment.id);
   assert.equal(esfuerzos.length, 1);
   assert.equal(esfuerzos[0].tiempo_s, Math.round(track.t[400] - track.t[100]));
+});
+
+test('importStravaSegments reutiliza el id legacy del mismo usuario', async () => {
+  const repository = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+  const service = createSegmentsService({ repository, userId: 'u1' });
+  const legacyId = strava.stravaSegmentUuid(999);
+  repository.segmentos.push({
+    id: legacyId,
+    user_id: 'u1',
+    nombre: 'Recta antigua',
+    tipo: 'strava',
+    distancia_m: Math.round(track.d[400] - track.d[100]),
+    inicio_lat: track.lat[100],
+    inicio_lon: track.lon[100],
+    fin_lat: track.lat[400],
+    fin_lon: track.lon[400],
+  });
+
+  const intervals = {
+    async getActivitySegments() {
+      return [{ segment_id: 999, name: 'Recta de prueba', start_index: 100, end_index: 400 }];
+    },
+  };
+
+  const result = await service.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+
+  assert.equal(result.creados, 0);
+  assert.equal(result.esfuerzos, 1);
+  assert.equal(repository.segmentos.length, 1);
+  assert.equal(repository.segmentos[0].id, legacyId);
+  assert.equal(repository.esfuerzos.length, 1);
+  assert.equal(repository.esfuerzos[0].segmento_id, legacyId);
+});
+
+test('el mismo segmento de Strava no choca entre dos usuarios', async () => {
+  const base = createFakeRepository();
+  const track = engine.streamsToTrack(buildStreams({ seconds: 600 }));
+  const intervals = {
+    async getActivitySegments() {
+      return [{ segment_id: 999, name: 'Recta compartida', start_index: 100, end_index: 400 }];
+    },
+  };
+
+  function scopedRepository(userId) {
+    return {
+      ...base,
+      async getSegment(id) {
+        return base.segmentos.find((item) => item.id === id && item.user_id === userId) || null;
+      },
+      async insertSegment(row) {
+        if (base.segmentos.some((item) => item.id === row.id)) {
+          throw new Error('duplicate key value violates unique constraint segmentos_pkey');
+        }
+        return base.insertSegment(row);
+      },
+    };
+  }
+
+  const u1 = createSegmentsService({ repository: scopedRepository('u1'), userId: 'u1' });
+  const u2 = createSegmentsService({ repository: scopedRepository('u2'), userId: 'u2' });
+
+  const primero = await u1.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+  const segundo = await u2.importStravaSegments({
+    activityId: 'a1',
+    fecha: '2026-05-01T08:00:00Z',
+    track,
+    intervals,
+  });
+
+  assert.deepEqual(primero, { creados: 1, esfuerzos: 1 });
+  assert.deepEqual(segundo, { creados: 1, esfuerzos: 1 });
+  assert.equal(base.segmentos.length, 2);
+  assert.notEqual(base.segmentos[0].id, base.segmentos[1].id);
+  assert.equal(base.segmentos[0].user_id, 'u1');
+  assert.equal(base.segmentos[1].user_id, 'u2');
 });
 
 test('importStravaSegments es idempotente', async () => {

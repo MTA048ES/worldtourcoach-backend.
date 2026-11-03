@@ -93,6 +93,7 @@ async function main() {
         fecha: actividad.fecha,
         track,
         intervals,
+        actividad: { ...actividad, tiene_gps: track.hasGps },
       });
 
       conTraza++;
@@ -106,6 +107,7 @@ async function main() {
         fecha: actividad.fecha,
         track,
         segments: segmentos,
+        actividad: { ...actividad, tiene_gps: track.hasGps },
       });
       totalEmparejados += emparejados;
 

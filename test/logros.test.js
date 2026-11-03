@@ -22,6 +22,7 @@ function actividad(fecha, distanciaKm, desnivel, horas, extra = {}) {
     distancia_m: distanciaKm * 1000,
     desnivel_m: desnivel,
     duracion_s: horas * 3600,
+    tiene_gps: true,
     ...extra,
   };
 }
@@ -33,10 +34,12 @@ const HISTORIAL = [
   actividad('2026-10-07T09:00:00Z', 30, 200, 1),
 ];
 
-test('claveSemana agrupa por lunes', () => {
+test('claveSemana agrupa por lunes en hora de Madrid', () => {
   assert.equal(claveSemana('2026-10-27T05:30:00Z'), '2026-10-26');
   assert.equal(claveSemana('2026-10-31T23:00:00Z'), '2026-10-26');
   assert.equal(claveSemana('2026-11-01T00:30:00Z'), '2026-10-26');
+  // Domingo 23:30 UTC ya es lunes en Madrid.
+  assert.equal(claveSemana('2026-11-01T23:30:00Z'), '2026-11-02');
 });
 
 test('computeLogros suma totales, puntos y nivel', async () => {
@@ -51,6 +54,29 @@ test('computeLogros suma totales, puntos y nivel', async () => {
   assert.equal(logros.progreso_nivel >= 0 && logros.progreso_nivel <= 1, true);
   assert.equal(logros.medallas_totales, 12);
   assert.ok(logros.medallas_conseguidas >= 3);
+});
+
+test('running, e-bike, manuales y salidas sin GPS no contaminan los totales', () => {
+  const mezcla = [
+    actividad('2026-10-27T08:00:00Z', 100, 1000, 3),
+    actividad('2026-10-28T08:00:00Z', 50, 500, 2, { tipo: 'EBikeRide' }),
+    actividad('2026-10-29T08:00:00Z', 20, 0, 1, { tipo: 'VirtualRide', tiene_gps: false }),
+    actividad('2026-10-30T08:00:00Z', 10, 100, 1, { tipo: 'Run' }),
+    actividad('2026-10-30T09:00:00Z', 50, 500, 2, { origen: 'manual' }),
+    actividad('2026-10-30T10:00:00Z', 1, 10, 0.05),
+    actividad('2026-10-30T11:00:00Z', 50, 500, 2, { tiene_gps: false }),
+  ];
+
+  const logros = computeLogros({ actividades: mezcla, ahora: AHORA });
+
+  // E-bike y rodillo suman constancia, pero no km/desnivel.
+  assert.equal(logros.totales.salidas, 3);
+  assert.equal(logros.totales.horas, 6);
+  assert.equal(logros.totales.rodillo, 1);
+  assert.equal(logros.totales.km, 100);
+  assert.equal(logros.totales.desnivel_m, 1000);
+  assert.equal(logros.medallas.find((m) => m.id === 'dia_100').progreso, 1);
+  assert.equal(logros.racha_semanas, 1);
 });
 
 test('las medallas suben de nivel con los umbrales', async () => {
