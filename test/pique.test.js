@@ -126,23 +126,66 @@ test('los segmentos automáticos no compiten en el pique', () => {
   assert.notEqual(elegido.segmento.tipo, 'auto');
 });
 
-test('las métricas de la semana excluyen e-bike y separan rodillo', () => {
-  const desde = Date.parse('2026-10-26T00:00:00Z');
-  const hasta = desde + 7 * 86400000;
+test('la liga no suma km de e-bike ni running/manual y separa rodillo', () => {
   const actividades = [
     { fecha: '2026-10-27T08:00:00Z', tipo: 'Ride', duracion_s: 3600, distancia_m: 40000, desnivel_m: 500, tiene_gps: true, tss: 80 },
     { fecha: '2026-10-29T08:00:00Z', tipo: 'VirtualRide', duracion_s: 3600, distancia_m: 30000, desnivel_m: 0, tiene_gps: false, tss: 60 },
     { fecha: '2026-10-30T08:00:00Z', tipo: 'EBikeRide', duracion_s: 3600, distancia_m: 50000, desnivel_m: 600, tiene_gps: true, tss: 40 },
+    { fecha: '2026-10-30T09:00:00Z', tipo: 'Run', duracion_s: 3600, distancia_m: 12000, desnivel_m: 100, tiene_gps: true, tss: 30 },
+    { fecha: '2026-10-30T10:00:00Z', tipo: 'Ride', duracion_s: 3600, distancia_m: 30000, desnivel_m: 300, tiene_gps: true, origen: 'manual', tss: 20 },
+    { fecha: '2026-10-30T11:00:00Z', tipo: 'Ride', duracion_s: 3600, distancia_m: 2900, desnivel_m: 30, tiene_gps: true, tss: 10 },
+    { fecha: '2026-10-30T12:00:00Z', tipo: 'Ride', duracion_s: 3600, distancia_m: 10000, desnivel_m: 100, tiene_gps: false, tss: 10 },
     { fecha: '2026-10-31T08:00:00Z', tipo: 'Ride', duracion_s: 300, distancia_m: 2000, desnivel_m: 20, tiene_gps: true, tss: 5 },
   ];
 
-  const m = metricasSemana(actividades, desde, hasta);
+  // E-bike y rodillo suman constancia; running/manual/salidas cortas no.
+  const m = metricasSemana(actividades, '2026-10-26');
   assert.equal(m.km, 40);
   assert.equal(m.desnivel_m, 500);
   assert.equal(m.dias, 3);
   assert.equal(m.salidas, 3);
   assert.equal(m.rodillo_h, 1);
   assert.equal(m.horas, 3);
+  assert.equal(m.tss, 140);
+});
+
+test('el tope diario recorta a 8 horas y 300 km', () => {
+  const actividades = [    { fecha: '2026-10-27T06:00:00Z', tipo: 'Ride', duracion_s: 6 * 3600, distancia_m: 400000, desnivel_m: 4000, tiene_gps: true, tss: 400 },
+    { fecha: '2026-10-27T15:00:00Z', tipo: 'Ride', duracion_s: 3 * 3600, distancia_m: 100000, desnivel_m: 1000, tiene_gps: true, tss: 200 },
+  ];
+
+  const m = metricasSemana(actividades, '2026-10-26');
+  assert.equal(m.km, 300);
+  assert.equal(m.horas, 8);
+  assert.equal(m.salidas, 2);
+  assert.equal(m.dias, 1);
+  // El desnivel y el TSS se recortan en la misma proporción que el km.
+  assert.equal(m.desnivel_m, 3000);
+  assert.equal(m.tss, 360);
+});
+
+test('la semana local de Madrid no parte la noche del domingo', () => {
+  const actividades = [
+    // Domingo 23:30 UTC = lunes 00:30 en Madrid (CET).
+    { fecha: '2026-11-01T23:30:00Z', tipo: 'Ride', duracion_s: 3600, distancia_m: 40000, desnivel_m: 500, tiene_gps: true, tss: 80 },
+  ];
+
+  assert.equal(metricasSemana(actividades, '2026-11-02').km, 40);
+  assert.equal(metricasSemana(actividades, '2026-10-26').km, 0);
+});
+
+test('el tope diario separa los días en hora de Madrid', () => {
+  const actividades = [
+    // Miércoles 23:30 en Madrid.
+    { fecha: '2026-11-04T22:30:00Z', tipo: 'Ride', duracion_s: 18000, distancia_m: 200000, desnivel_m: 1000, tiene_gps: true, tss: 100 },
+    // Jueves 00:30 en Madrid, aunque en UTC siga siendo miércoles.
+    { fecha: '2026-11-04T23:30:00Z', tipo: 'Ride', duracion_s: 18000, distancia_m: 200000, desnivel_m: 1000, tiene_gps: true, tss: 100 },
+  ];
+
+  const m = metricasSemana(actividades, '2026-11-02');
+  assert.equal(m.dias, 2);
+  assert.equal(m.km, 400);
+  assert.equal(m.horas, 10);
 });
 
 test('el servicio monta semanas, vitrina y segmento', async () => {
@@ -152,6 +195,7 @@ test('el servicio monta semanas, vitrina y segmento', async () => {
       return [
         { actividad_id: '1', fecha: '2026-10-27T08:00:00Z', tipo: 'Ride', nombre: 'Ruta', duracion_s: 3600, distancia_m: 40000, desnivel_m: 500, tiene_gps: true, tss: 80 },
         { actividad_id: '2', fecha: '2026-10-20T08:00:00Z', tipo: 'Ride', nombre: 'Otra', duracion_s: 1800, distancia_m: 20000, desnivel_m: 200, tiene_gps: true, tss: 40 },
+        { actividad_id: '3', fecha: '2026-10-27T08:00:00Z', tipo: 'EBikeRide', nombre: 'Eléctrica', duracion_s: 3600, distancia_m: 100000, desnivel_m: 1000, tiene_gps: true, tss: 40 },
       ];
     },
     async listSegments() {
@@ -159,9 +203,10 @@ test('el servicio monta semanas, vitrina y segmento', async () => {
     },
     async listEfforts() {
       return ['a', 'b', 'c'].flatMap((id) => [
-        { segmento_id: id, tiempo_s: 300, fecha: '2026-10-27T09:00:00Z' },
-        { segmento_id: id, tiempo_s: 320, fecha: '2026-09-01T09:00:00Z' },
-        { segmento_id: id, tiempo_s: 70, fecha: '2026-10-27T09:00:00Z' },
+        { segmento_id: id, actividad_id: '1', tiempo_s: 300, fecha: '2026-10-27T09:00:00Z' },
+        { segmento_id: id, actividad_id: '2', tiempo_s: 320, fecha: '2026-09-01T09:00:00Z' },
+        { segmento_id: id, actividad_id: '3', tiempo_s: 250, fecha: '2026-10-27T09:00:00Z' },
+        { segmento_id: id, actividad_id: '1', tiempo_s: 70, fecha: '2026-10-27T09:00:00Z' },
       ]);
     },
   };
@@ -173,12 +218,15 @@ test('el servicio monta semanas, vitrina y segmento', async () => {
   assert.equal(datos.semanas.length, 8);
   const actual = datos.semanas[datos.semanas.length - 1];
   assert.equal(actual.km, 40);
-  assert.equal(actual.salidas, 1);
+  // La e-bike suma constancia (día/salida), pero no km.
+  assert.equal(actual.salidas, 2);
 
   assert.equal(datos.resumen.km, 60);
   assert.equal(datos.resumen.racha_semanas, 2);
   assert.ok(datos.vitrina.length >= 4);
   assert.equal(datos.vitrina[0].id, 'semana_km');
+  const salidaLarga = datos.vitrina.find((item) => item.id === 'salida_larga');
+  assert.equal(salidaLarga.valor, 40, 'la e-bike no puede ser la salida más larga');
 
   assert.ok(datos.segmento);
   assert.equal(datos.segmento.mejor_tiempo_s, 300);

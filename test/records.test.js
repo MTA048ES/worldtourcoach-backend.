@@ -61,21 +61,24 @@ test('sin potencia no devuelve nada', () => {
   assert.equal(mejoresDeTrack(track), null);
 });
 
-test('el servicio elige el récord global y lo cachea', async () => {
+test('el servicio elige el récord global sin contar e-bike y lo cachea', async () => {
   const lento = codec.encodeTrack(trackConstante({ seconds: 300, watts: 180, picos: [{ desde: 10, duracion: 20, vatios: 350 }] }));
   const rapido = codec.encodeTrack(trackConstante({ seconds: 300, watts: 220, picos: [{ desde: 10, duracion: 20, vatios: 500 }] }));
+  const electrica = codec.encodeTrack(trackConstante({ seconds: 300, watts: 300, picos: [{ desde: 10, duracion: 20, vatios: 900 }] }));
 
   const repository = {
     async listActivities() {
       return [
         { actividad_id: 'a1', fecha: '2026-01-01T09:00:00Z', nombre: 'Suave', tipo: 'Ride' },
         { actividad_id: 'a2', fecha: '2026-02-01T09:00:00Z', nombre: 'Fuerte', tipo: 'Ride' },
+        { actividad_id: 'a3', fecha: '2026-03-01T09:00:00Z', nombre: 'Eléctrica', tipo: 'EBikeRide' },
       ];
     },
     async *iterateTracks() {
       yield [
         { actividad_id: 'a1', datos: lento.datos },
         { actividad_id: 'a2', datos: rapido.datos },
+        { actividad_id: 'a3', datos: electrica.datos },
       ];
     },
   };
@@ -88,6 +91,7 @@ test('el servicio elige el récord global y lo cachea', async () => {
   assert.equal(diez.potencia, 500);
   assert.equal(diez.actividad_id, 'a2');
   assert.equal(diez.nombre, 'Fuerte');
+  assert.equal(primera.salidas, 2);
 
   const segunda = await servicio.getRecords();
   assert.equal(segunda.cacheado, true);

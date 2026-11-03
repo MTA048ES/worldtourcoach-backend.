@@ -61,7 +61,7 @@ create table if not exists segmentos (
   id                   uuid primary key default gen_random_uuid(),
   user_id              text not null,
   nombre               text not null,
-  tipo                 text not null check (tipo in ('auto', 'manual')),
+  tipo                 text not null check (tipo in ('auto', 'manual', 'strava')),
   deporte              text default 'Ride',
   distancia_m          integer,
   desnivel_m           integer,
@@ -80,6 +80,12 @@ create table if not exists segmentos (
 
 create index if not exists segmentos_user_idx
   on segmentos (user_id, creado_en desc);
+
+-- Bases creadas antes de importar Strava solo permitían auto/manual.
+-- Se reemplaza el CHECK para que los segmentos de Strava conserven su tipo.
+alter table segmentos drop constraint if exists segmentos_tipo_check;
+alter table segmentos add constraint segmentos_tipo_check
+  check (tipo in ('auto', 'manual', 'strava'));
 
 -- ─── ESFUERZOS (una fila por actividad y segmento) ─────────────
 create table if not exists esfuerzos (

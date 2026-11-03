@@ -246,6 +246,30 @@ test('el detalle del segmento trae la clasificación', { skip }, async () => {
   }
 });
 
+test('los logros ignoran los segmentos automáticos', { skip }, async () => {
+  const { server, base } = await startServer({ token: TOKEN });
+  try {
+    const result = await get(base, '/logros', TOKEN);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.data.totales.segmentos, 0);
+    assert.equal(result.body.data.totales.salidas, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('las zonas sin FTP responden 400, no un FTP inventado', { skip }, async () => {
+  const { server, base } = await startServer({ token: TOKEN });
+  try {
+    const result = await get(base, '/zonas', TOKEN);
+    assert.equal(result.status, 400);
+    assert.equal(result.body.success, false);
+    assert.match(result.body.error, /FTP no definido/);
+  } finally {
+    server.close();
+  }
+});
+
 test('crear segmento valida coordenadas', { skip }, async () => {
   const { server, base } = await startServer({ token: TOKEN });
   try {
